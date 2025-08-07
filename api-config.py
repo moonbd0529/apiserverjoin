@@ -26,11 +26,11 @@ class APIConfig:
                 'HOST': '0.0.0.0',
                 'PORT': 5001,
                 'DEBUG': True,
-                'FRONTEND_URL': 'http://localhost:3000',
+                'FRONTEND_URL': 'https://admin-aa3r.onrender.com',
                 'CORS_ORIGINS': [
-                    'http://localhost:3000',
-                    'http://127.0.0.1:3000',
-                    'http://192.168.1.3:3000'
+                    'https://admin-aa3r.onrender.com',
+                    'https://admin-aa3r.onrender.com',
+                    'https://admin-aa3r.onrender.com'
                 ],
                 'MEDIA_PATH': './media',
                 'DATABASE_PATH': './users.db'
@@ -40,9 +40,9 @@ class APIConfig:
                 'HOST': '0.0.0.0',
                 'PORT': 5001,
                 'DEBUG': False,
-                'FRONTEND_URL': 'https://staging.your-domain.com',
+                'FRONTEND_URL': 'https://admin-aa3r.onrender.com',
                 'CORS_ORIGINS': [
-                    'https://staging.your-domain.com',
+                    'https://admin-aa3r.onrender.com',
                     'https://staging.your-domain.com:3000'
                 ],
                 'MEDIA_PATH': './media',
@@ -218,4 +218,5 @@ if __name__ == "__main__":
     # api_config.update_server_port(8000)
     
     # Example: Update environment
+
     # api_config.update_environment('production') 
