@@ -897,7 +897,7 @@ if __name__ == '__main__':
     print("🌐 Starting Flask app...")
     
     # Get port from environment variable (Render sets PORT)
-    port = int(os.environ.get('PORT', 5001))
+    port = int(os.environ.get('PORT', 8080))
     host = '0.0.0.0'  # Bind to all interfaces for Render
     
     print(f"🚀 Server starting on {host}:{port}")
