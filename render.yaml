@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: apiserverjoin
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python api.py
+    envVars:
+      - key: BOT_TOKEN
+        value: 7408341592:AAHE_Ba4_Tn5qM_qTaui5E8DFSZDB86hys0
+      - key: ADMIN_USER_ID
+        value: 6251161332
+      - key: DASHBOARD_PASSWORD
+        value: cpode
+      - key: CHANNEL_ID
+        value: -1002286109418
+      - key: CHANNEL_URL
+        value: https://t.me/+mEcMgPqw3xphODM1
+      - key: GROUP_INVITE_LINK
+        value: https://t.me/+mEcMgPqw3xphODM1
+      - key: API_ID
+        value: 25842851
+      - key: API_HASH
+        value: 4fcbc414da34a43d86eca15e1235d2ae
+      - key: CHAT_ID
+        value: -1002286109418
+      - key: WELCOME_TEXT
+        value: "🎉 Hi {mention}, you are now a member of {title}!"
+      - key: PYTHON_VERSION
+        value: 3.11.0 
