@@ -239,7 +239,7 @@ def chat_messages(user_id):
 
 @app.route('/get_channel_invite_link', methods=['GET'])
 def get_channel_invite_link():
-    return jsonify({'invite_link': GROUP_INVITE_LINK})
+    return jsonify({'invite_link': CHANNEL_URL})
 
 # ... (rest of your existing code remains the same)
 
