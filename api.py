@@ -34,8 +34,8 @@ app.secret_key = 'change_this_secret_key'
 CORS(app, origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://admin-aa3r.onrender.com",
-    "https://admin-aa3r.onrender.com",
+    "https://admin-o7ei.onrender.com",
+    "https://admin-o7ei.onrender.com/",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com"
@@ -45,8 +45,8 @@ CORS(app, origins=[
 socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://admin-aa3r.onrender.com",
-    "https://admin-aa3r.onrender.com",
+    "https://admin-o7ei.onrender.com",
+    "https://admin-o7ei.onrender.com/",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com"
@@ -410,6 +410,16 @@ async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         save_message(user.id, 'user', f"[audio]{file_url}")
         # Real-time notify admin dashboard
         socketio.emit('new_message', {'user_id': user.id, 'full_name': full_name, 'username': username})
+    elif update.message.document:
+        file = await context.bot.get_file(update.message.document.file_id)
+        # Check if file_path already contains the full URL
+        if file.file_path.startswith('http'):
+            file_url = file.file_path
+        else:
+            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+        save_message(user.id, 'user', f"[document]{file_url}")
+        # Real-time notify admin dashboard
+        socketio.emit('new_message', {'user_id': user.id, 'full_name': full_name, 'username': username})
     elif update.message.text:
         save_message(user.id, 'user', update.message.text)
 
@@ -504,6 +514,7 @@ application.add_handler(MessageHandler(tg_filters.PHOTO, user_message_handler))
 application.add_handler(MessageHandler(tg_filters.VIDEO, user_message_handler))
 application.add_handler(MessageHandler(tg_filters.VOICE, user_message_handler))
 application.add_handler(MessageHandler(tg_filters.AUDIO, user_message_handler))
+application.add_handler(MessageHandler(tg_filters.Document.ALL, user_message_handler))
 application.add_handler(ChatJoinRequestHandler(approve_join))
 
 # Pyrogram Bot Setup
@@ -603,7 +614,6 @@ def chat_send(user_id):
 
     # Handle files
     if files and len(files) > 0:
-        media_group = []  # Unified media group for all types
         temp_paths = []
         
         # File size validation (Telegram limits: 50MB for files, 20MB for photos)
@@ -628,43 +638,120 @@ def chat_send(user_id):
             temp_path = f'temp_{filename}'
             file.save(temp_path)
             temp_paths.append(temp_path)
-            
-            # Check if this is a GIF file before processing
-            is_gif = is_gif_file(temp_path, mimetype=mimetype, original_filename=filename)
-            print(f"Debug - admin upload: filename={filename}, mimetype={mimetype}, is_gif={is_gif}")
-            
-            # Add to unified media group
-            if mimetype.startswith('image/'):
-                media_group.append(InputMediaPhoto(open(temp_path, 'rb')))
-            elif mimetype.startswith('video/'):
-                media_group.append(InputMediaVideo(open(temp_path, 'rb')))
-            elif mimetype.startswith('audio/'):
-                media_group.append(InputMediaAudio(open(temp_path, 'rb')))
         
         try:
-            if len(media_group) > 1:
-                print(f'Sending unified media group ({len(media_group)} files)...')
-                # For now, just save the message without trying to get file URLs
-                for i, media in enumerate(media_group):
-                    if isinstance(media, InputMediaPhoto):
-                        save_message(user_id, 'admin', f'[image]sent')
-                    elif isinstance(media, InputMediaVideo):
-                        save_message(user_id, 'admin', f'[video]sent')
-                    elif isinstance(media, InputMediaAudio):
-                        save_message(user_id, 'admin', f'[audio]sent')
+            # Send files to Telegram
+            for temp_path in temp_paths:
+                filename = os.path.basename(temp_path)
+                mimetype = None
                 
-                sent = True
-            elif len(media_group) == 1:
-                # Single file - just save the message
-                media = media_group[0]
-                if isinstance(media, InputMediaPhoto):
-                    save_message(user_id, 'admin', f'[image]sent')
-                elif isinstance(media, InputMediaVideo):
-                    save_message(user_id, 'admin', f'[video]sent')
-                elif isinstance(media, InputMediaAudio):
-                    save_message(user_id, 'admin', f'[audio]sent')
+                # Determine mimetype from file extension
+                if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp')):
+                    mimetype = 'image'
+                elif filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+                    mimetype = 'video'
+                elif filename.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a')):
+                    mimetype = 'audio'
+                else:
+                    mimetype = 'document'
                 
-                sent = True
+                # Send file to Telegram
+                with open(temp_path, 'rb') as f:
+                    files_data = {'document': f}
+                    data = {'chat_id': int(user_id)}
+                    
+                    if message and temp_path == temp_paths[0]:  # Add caption to first file only
+                        data['caption'] = message
+                    
+                    if mimetype == 'image':
+                        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+                        files_data = {'photo': f}
+                    elif mimetype == 'video':
+                        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
+                        files_data = {'video': f}
+                    elif mimetype == 'audio':
+                        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio"
+                        files_data = {'audio': f}
+                    else:
+                        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+                        files_data = {'document': f}
+                    
+                    f.seek(0)  # Reset file pointer
+                    response = requests.post(url, data=data, files=files_data)
+                    
+                    if response.status_code == 200:
+                        response_data = response.json()
+                        
+                        # Get the actual file URL from Telegram response
+                        file_url = None
+                        if response_data.get('ok') and response_data.get('result'):
+                            result = response_data['result']
+                            
+                            # Extract file path from different media types
+                            if 'photo' in result:
+                                # For photos, get the largest photo
+                                photos = result['photo']
+                                if photos:
+                                    largest_photo = photos[-1]  # Last photo is the largest
+                                    file_id = largest_photo['file_id']
+                                    # Get file info to construct URL
+                                    file_info_response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile", params={'file_id': file_id})
+                                    if file_info_response.status_code == 200:
+                                        file_info = file_info_response.json()
+                                        if file_info.get('ok'):
+                                            file_path = file_info['result']['file_path']
+                                            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+                            elif 'video' in result:
+                                file_id = result['video']['file_id']
+                                file_info_response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile", params={'file_id': file_id})
+                                if file_info_response.status_code == 200:
+                                    file_info = file_info_response.json()
+                                    if file_info.get('ok'):
+                                        file_path = file_info['result']['file_path']
+                                        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+                            elif 'audio' in result:
+                                file_id = result['audio']['file_id']
+                                file_info_response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile", params={'file_id': file_id})
+                                if file_info_response.status_code == 200:
+                                    file_info = file_info_response.json()
+                                    if file_info.get('ok'):
+                                        file_path = file_info['result']['file_path']
+                                        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+                            elif 'document' in result:
+                                file_id = result['document']['file_id']
+                                file_info_response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile", params={'file_id': file_id})
+                                if file_info_response.status_code == 200:
+                                    file_info = file_info_response.json()
+                                    if file_info.get('ok'):
+                                        file_path = file_info['result']['file_path']
+                                        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+                        
+                        # Save message with actual file URL or fallback
+                        if file_url:
+                            if mimetype == 'image':
+                                save_message(user_id, 'admin', f'[image]{file_url}')
+                            elif mimetype == 'video':
+                                save_message(user_id, 'admin', f'[video]{file_url}')
+                            elif mimetype == 'audio':
+                                save_message(user_id, 'admin', f'[audio]{file_url}')
+                            else:
+                                save_message(user_id, 'admin', f'[document]{file_url}')
+                        else:
+                            # Fallback if we couldn't get the file URL
+                            if mimetype == 'image':
+                                save_message(user_id, 'admin', f'[image]sent')
+                            elif mimetype == 'video':
+                                save_message(user_id, 'admin', f'[video]sent')
+                            elif mimetype == 'audio':
+                                save_message(user_id, 'admin', f'[audio]sent')
+                            else:
+                                save_message(user_id, 'admin', f'[document]sent')
+                        
+                        sent = True
+                    else:
+                        print(f"Telegram API error sending file: {response.text}")
+                        return jsonify({'status': 'error', 'message': f'Failed to send file: {response.text}'}), 500
+            
         except Exception as e:
             print(f"Telegram file send error: {e}")
             traceback.print_exc()
@@ -747,6 +834,44 @@ def on_join(data):
     room = data.get('room')
     join_room(room)
 
+# ========================================
+# 🤖 BOT PROCESS FUNCTIONS
+# ========================================
+
+def run_telegram_bot():
+    """Run Telegram bot in a separate process"""
+    print("🤖 Telegram bot starting in separate process...")
+    import asyncio
+    import signal
+    
+    # Disable signal handlers for this process
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(application.run_polling(drop_pending_updates=True))
+    except Exception as e:
+        print(f"❌ Telegram bot error: {e}")
+
+def run_pyrogram_bot():
+    """Run Pyrogram bot in a separate process"""
+    print("🔥 Pyrogram bot starting in separate process...")
+    import asyncio
+    import signal
+    
+    # Disable signal handlers for this process
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(pyro_app.run())
+    except Exception as e:
+        print(f"❌ Pyrogram bot error: {e}")
+
 if __name__ == '__main__':
     import multiprocessing
     import time
@@ -757,40 +882,6 @@ if __name__ == '__main__':
     print(f"🔧 BOT_TOKEN: {BOT_TOKEN[:10]}...")
     print(f"🔧 API_ID: {config.API_ID}")
     print(f"🔧 API_HASH: {config.API_HASH[:10]}...")
-    
-    def run_telegram_bot():
-        """Run Telegram bot in a separate process"""
-        print("🤖 Telegram bot starting in separate process...")
-        import asyncio
-        import signal
-        
-        # Disable signal handlers for this process
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(application.run_polling(drop_pending_updates=True))
-        except Exception as e:
-            print(f"❌ Telegram bot error: {e}")
-    
-    def run_pyrogram_bot():
-        """Run Pyrogram bot in a separate process"""
-        print("🔥 Pyrogram bot starting in separate process...")
-        import asyncio
-        import signal
-        
-        # Disable signal handlers for this process
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(pyro_app.run())
-        except Exception as e:
-            print(f"❌ Pyrogram bot error: {e}")
     
     # Start bots in separate processes
     telegram_process = multiprocessing.Process(target=run_telegram_bot, daemon=True)
@@ -806,7 +897,7 @@ if __name__ == '__main__':
     print("🌐 Starting Flask app...")
     
     # Get port from environment variable (Render sets PORT)
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get('PORT', 5001))
     host = '0.0.0.0'  # Bind to all interfaces for Render
     
     print(f"🚀 Server starting on {host}:{port}")
