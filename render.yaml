@@ -3,7 +3,7 @@ services:
     name: apiserverjoin
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements-alternative.txt
     startCommand: python api.py
     envVars:
       - key: BOT_TOKEN
