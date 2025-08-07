@@ -41,7 +41,8 @@ CORS(app, origins=[
     "https://apiserverjoin.onrender.com"
 ], supports_credentials=True)
 
-socketio = SocketIO(app, async_mode='threading', cors_allowed_origins=[
+# Use eventlet for better compatibility
+socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "https://admin-o7ei.onrender.com",
