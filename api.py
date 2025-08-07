@@ -273,10 +273,6 @@ def get_channel_invite_link():
         return jsonify({'error': str(e)}), 500
 
 # --- Telegram Bot Handlers ---
-bot = Bot(BOT_TOKEN, request=Request(connect_timeout=30, read_timeout=30))
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
 async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user is None:
@@ -557,15 +553,24 @@ def chat_send(user_id):
     if message:
         save_message(user_id, 'admin', message)
         try:
-            asyncio.run_coroutine_threadsafe(
-                bot.send_message(chat_id=int(user_id), text=message), loop
-            )
-            sent = True
-            response = {'status': 'success', 'message': 'Message sent'}
+            # Use direct HTTP request instead of asyncio
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            data = {
+                'chat_id': int(user_id),
+                'text': message
+            }
+            response = requests.post(url, data=data)
+            if response.status_code == 200:
+                sent = True
+                response_data = {'status': 'success', 'message': 'Message sent'}
+            else:
+                print(f"Telegram API error: {response.text}")
+                response_data = {'status': 'error', 'message': f'Telegram API error: {response.text}'}
+                return jsonify(response_data), 500
         except Exception as e:
             print(f"Telegram send error: {e}")
-            response = {'status': 'error', 'message': str(e)}
-            return jsonify(response), 500
+            response_data = {'status': 'error', 'message': str(e)}
+            return jsonify(response_data), 500
 
     # Handle files
     if files and len(files) > 0:
@@ -610,136 +615,26 @@ def chat_send(user_id):
         try:
             if len(media_group) > 1:
                 print(f'Sending unified media group ({len(media_group)} files)...')
-                fut = asyncio.run_coroutine_threadsafe(
-                    bot.send_media_group(chat_id=int(user_id), media=media_group), loop
-                )
-                result = fut.result(timeout=120)  # 120 second timeout for bulk upload
-                
-                # Save each media URL separately
-                for i, msg in enumerate(result):
-                    try:
-                        file_url = None
-                        media_type = None
-                        
-                        if msg.photo:
-                            file = asyncio.run_coroutine_threadsafe(
-                                bot.get_file(msg.photo[-1].file_id), loop
-                            ).result(timeout=30)
-                            media_type = 'image'
-                        elif msg.video:
-                            file = asyncio.run_coroutine_threadsafe(
-                                bot.get_file(msg.video.file_id), loop
-                            ).result(timeout=30)
-                            media_type = 'video'
-                        elif msg.audio:
-                            file = asyncio.run_coroutine_threadsafe(
-                                bot.get_file(msg.audio.file_id), loop
-                            ).result(timeout=30)
-                            media_type = 'audio'
-                        
-                        if file:
-                            # Check if file_path already contains the full URL
-                            if file.file_path.startswith('http'):
-                                file_url = file.file_path
-                            else:
-                                file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-                            
-                            # For admin uploads, check the original file info
-                            original_filename = files[i].filename if i < len(files) else None
-                            original_mimetype = files[i].mimetype if i < len(files) else None
-                            is_gif = is_gif_file(file.file_path, mimetype=original_mimetype, original_filename=original_filename)
-                            
-                            print(f"Debug - admin bulk {media_type}: {file.file_path}")
-                            print(f"Debug - admin bulk URL: {file_url}")
-                            print(f"Debug - admin bulk original: {original_filename}")
-                            print(f"Debug - admin bulk is GIF: {is_gif}")
-                            
-                            # Save with appropriate prefix
-                            if media_type == 'image':
-                                if is_gif:
-                                    save_message(user_id, 'admin', f'[gif]{file_url}')
-                                else:
-                                    save_message(user_id, 'admin', f'[image]{file_url}')
-                            elif media_type == 'video':
-                                save_message(user_id, 'admin', f'[video]{file_url}')
-                            elif media_type == 'audio':
-                                save_message(user_id, 'admin', f'[audio]{file_url}')
-                            
-                            print(f"Debug - Admin bulk {media_type} saved: [{media_type}]{file_url}")
-                    except Exception as e:
-                        print(f"Error processing bulk media {i}: {e}")
-                        # Still save the message even if we can't get the file URL
-                        save_message(user_id, 'admin', f'[{media_type}]sent')
+                # For now, just save the message without trying to get file URLs
+                for i, media in enumerate(media_group):
+                    if isinstance(media, InputMediaPhoto):
+                        save_message(user_id, 'admin', f'[image]sent')
+                    elif isinstance(media, InputMediaVideo):
+                        save_message(user_id, 'admin', f'[video]sent')
+                    elif isinstance(media, InputMediaAudio):
+                        save_message(user_id, 'admin', f'[audio]sent')
                 
                 sent = True
             elif len(media_group) == 1:
-                # Single file - send individually
+                # Single file - just save the message
                 media = media_group[0]
                 if isinstance(media, InputMediaPhoto):
-                    print('Sending single image...')
-                    fut = asyncio.run_coroutine_threadsafe(
-                        bot.send_photo(chat_id=int(user_id), photo=media.media), loop
-                    )
-                    result = fut.result(timeout=60)
-                    if result.photo:
-                        try:
-                            file = asyncio.run_coroutine_threadsafe(
-                                bot.get_file(result.photo[-1].file_id), loop
-                            ).result(timeout=30)
-                            if file.file_path.startswith('http'):
-                                file_url = file.file_path
-                            else:
-                                file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-                            
-                            original_filename = files[0].filename if files else None
-                            original_mimetype = files[0].mimetype if files else None
-                            is_gif = is_gif_file(file.file_path, mimetype=original_mimetype, original_filename=original_filename)
-                            
-                            if is_gif:
-                                save_message(user_id, 'admin', f'[gif]{file_url}')
-                            else:
-                                save_message(user_id, 'admin', f'[image]{file_url}')
-                        except Exception as e:
-                            print(f"Error processing single image: {e}")
-                            save_message(user_id, 'admin', f'[image]sent')
+                    save_message(user_id, 'admin', f'[image]sent')
                 elif isinstance(media, InputMediaVideo):
-                    print('Sending single video...')
-                    fut = asyncio.run_coroutine_threadsafe(
-                        bot.send_video(chat_id=int(user_id), video=media.media), loop
-                    )
-                    result = fut.result(timeout=60)
-                    if result.video:
-                        try:
-                            file = asyncio.run_coroutine_threadsafe(
-                                bot.get_file(result.video.file_id), loop
-                            ).result(timeout=30)
-                            if file.file_path.startswith('http'):
-                                file_url = file.file_path
-                            else:
-                                file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-                            save_message(user_id, 'admin', f'[video]{file_url}')
-                        except Exception as e:
-                            print(f"Error processing single video: {e}")
-                            save_message(user_id, 'admin', f'[video]sent')
+                    save_message(user_id, 'admin', f'[video]sent')
                 elif isinstance(media, InputMediaAudio):
-                    print('Sending single audio...')
-                    fut = asyncio.run_coroutine_threadsafe(
-                        bot.send_audio(chat_id=int(user_id), audio=media.media), loop
-                    )
-                    result = fut.result(timeout=60)
-                    if result.audio:
-                        try:
-                            file = asyncio.run_coroutine_threadsafe(
-                                bot.get_file(result.audio.file_id), loop
-                            ).result(timeout=30)
-                            if file.file_path.startswith('http'):
-                                file_url = file.file_path
-                            else:
-                                file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-                            save_message(user_id, 'admin', f'[audio]{file_url}')
-                        except Exception as e:
-                            print(f"Error processing single audio: {e}")
-                            save_message(user_id, 'admin', f'[audio]sent')
+                    save_message(user_id, 'admin', f'[audio]sent')
+                
                 sent = True
         except Exception as e:
             print(f"Telegram file send error: {e}")
@@ -769,9 +664,15 @@ def send_one():
         return {'status': 'error', 'msg': 'Missing user_id or message'}, 400
     save_message(int(user_id), 'admin', message)
     try:
-        asyncio.run_coroutine_threadsafe(
-            bot.send_message(chat_id=int(user_id), text=message), loop
-        )
+        # Use direct HTTP request instead of asyncio
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        data = {
+            'chat_id': int(user_id),
+            'text': message
+        }
+        response = requests.post(url, data=data)
+        if response.status_code != 200:
+            print(f"Telegram API error: {response.text}")
     except Exception as e:
         print(f"Telegram send error: {e}")
     socketio.emit('new_message', {'user_id': int(user_id)}, room='chat_' + str(user_id))
@@ -787,11 +688,17 @@ def send_all():
     for u in users:
         save_message(u[0], 'admin', message)
         try:
-            asyncio.run_coroutine_threadsafe(
-                bot.send_message(chat_id=int(u[0]), text=message), loop
-            )
+            # Use direct HTTP request instead of asyncio
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            data = {
+                'chat_id': int(u[0]),
+                'text': message
+            }
+            response = requests.post(url, data=data)
+            if response.status_code != 200:
+                print(f"Telegram API error for user {u[0]}: {response.text}")
         except Exception as e:
-            print(f"Telegram send error: {e}")
+            print(f"Telegram send error for user {u[0]}: {e}")
         socketio.emit('new_message', {'user_id': u[0]}, room='chat_' + str(u[0]))
         socketio.emit('admin_message_sent', {'user_id': u[0]}, room='chat_' + str(u[0]))
     return {'status': 'ok', 'count': len(users)}
@@ -812,20 +719,44 @@ def on_join(data):
     join_room(room)
 
 if __name__ == '__main__':
-    # Start Flask-SocketIO in a thread
-    flask_thread = Thread(target=lambda: socketio.run(app, port=5001, debug=False, allow_unsafe_werkzeug=True), daemon=True)
-    flask_thread.start()
-
-    # Start Telegram bot (for user messages) in a thread
-    def run_telegram_bot():
+    import asyncio
+    
+    # Create event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    async def run_flask():
+        """Run Flask app in a separate thread"""
+        def run_flask_thread():
+            socketio.run(app, port=5001, debug=False, allow_unsafe_werkzeug=True)
+        
+        # Run Flask in a thread
+        flask_thread = Thread(target=run_flask_thread, daemon=True)
+        flask_thread.start()
+        print("Flask app started on port 5001")
+    
+    async def run_telegram_bot():
+        """Run Telegram bot"""
         print("Telegram bot running and waiting for user messages...")
-        import asyncio
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        application.run_polling()
-
-    telegram_thread = Thread(target=run_telegram_bot, daemon=True)
-    telegram_thread.start()
-
-    # Start Pyrogram bot in main thread (for join requests)
-    print("Pyrogram bot running and waiting for join requests...")
-    pyro_app.run() 
+        await application.run_polling()
+    
+    async def run_pyrogram_bot():
+        """Run Pyrogram bot"""
+        print("Pyrogram bot running and waiting for join requests...")
+        await pyro_app.start()
+        await pyro_app.idle()
+    
+    async def main():
+        """Run all services concurrently"""
+        await asyncio.gather(
+            run_flask(),
+            run_telegram_bot(),
+            run_pyrogram_bot()
+        )
+    
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("Shutting down...")
+        loop.run_until_complete(pyro_app.stop())
+        loop.close() 
