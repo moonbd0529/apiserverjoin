@@ -414,4 +414,4 @@ if __name__ == '__main__':
     telegram_process.start()
     time.sleep(3)
     logger.info("Starting Flask app...")
-    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5001)), debug=False)
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=False)
