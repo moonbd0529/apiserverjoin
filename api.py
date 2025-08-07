@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', os.urandom(24))
-CORS(app, origins=["https://admin-o7ei.onrender.com", "http://localhost:3000"], supports_credentials=True)
-socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=["https://admin-o7ei.onrender.com", "http://localhost:3000"])
+CORS(app, origins=["https://admin-aa3r.onrender.com", "http://localhost:3000"], supports_credentials=True)
+socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=["https://admin-aa3r.onrender.com", "http://localhost:3000"])
 
 DB_NAME = 'users.db'
 init_db()  # Ensure database tables exist (including label column)
