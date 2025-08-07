@@ -29,15 +29,20 @@ from telegram.request import HTTPXRequest as Request
 
 app = Flask(__name__)
 app.secret_key = 'change_this_secret_key'
+
+# Production CORS configuration
 CORS(app, origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://192.168.1.3:3000"
+    "https://your-render-app.onrender.com",  # Update with your Render URL
+    "https://your-railway-app.railway.app"   # Update with your Railway URL
 ], supports_credentials=True)
+
 socketio = SocketIO(app, async_mode='threading', cors_allowed_origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://192.168.1.3:3000"
+    "https://your-render-app.onrender.com",  # Update with your Render URL
+    "https://your-railway-app.railway.app"   # Update with your Railway URL
 ])
 
 DB_NAME = 'users.db'
@@ -808,7 +813,7 @@ def on_join(data):
 
 if __name__ == '__main__':
     # Start Flask-SocketIO in a thread
-    flask_thread = Thread(target=lambda: socketio.run(app, port=5001, debug=False), daemon=True)
+    flask_thread = Thread(target=lambda: socketio.run(app, port=5001, debug=False, allow_unsafe_werkzeug=True), daemon=True)
     flask_thread.start()
 
     # Start Telegram bot (for user messages) in a thread
