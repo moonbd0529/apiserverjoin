@@ -34,8 +34,8 @@ app.secret_key = 'change_this_secret_key'
 CORS(app, origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://admin-o7ei.onrender.com",
-    "https://admin-o7ei.onrender.com/",
+    "https://admin-aa3r.onrender.com",
+    "https://admin-aa3r.onrender.com",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com"
@@ -45,8 +45,8 @@ CORS(app, origins=[
 socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://admin-o7ei.onrender.com",
-    "https://admin-o7ei.onrender.com/",
+    "https://admin-aa3r.onrender.com",
+    "https://admin-aa3r.onrender.com",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com"
