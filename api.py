@@ -719,44 +719,41 @@ def on_join(data):
     join_room(room)
 
 if __name__ == '__main__':
-    import asyncio
+    import threading
+    import time
     
-    # Create event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    async def run_flask():
-        """Run Flask app in a separate thread"""
-        def run_flask_thread():
-            socketio.run(app, port=5001, debug=False, allow_unsafe_werkzeug=True)
-        
-        # Run Flask in a thread
-        flask_thread = Thread(target=run_flask_thread, daemon=True)
-        flask_thread.start()
-        print("Flask app started on port 5001")
-    
-    async def run_telegram_bot():
-        """Run Telegram bot"""
+    def run_telegram_bot():
+        """Run Telegram bot in a thread"""
         print("Telegram bot running and waiting for user messages...")
-        await application.run_polling()
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(application.run_polling())
+        except Exception as e:
+            print(f"Telegram bot error: {e}")
     
-    async def run_pyrogram_bot():
-        """Run Pyrogram bot"""
+    def run_pyrogram_bot():
+        """Run Pyrogram bot in a thread"""
         print("Pyrogram bot running and waiting for join requests...")
-        await pyro_app.start()
-        await pyro_app.idle()
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(pyro_app.run())
+        except Exception as e:
+            print(f"Pyrogram bot error: {e}")
     
-    async def main():
-        """Run all services concurrently"""
-        await asyncio.gather(
-            run_flask(),
-            run_telegram_bot(),
-            run_pyrogram_bot()
-        )
+    # Start bots in separate threads
+    telegram_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+    pyrogram_thread = threading.Thread(target=run_pyrogram_bot, daemon=True)
     
-    try:
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        print("Shutting down...")
-        loop.run_until_complete(pyro_app.stop())
-        loop.close() 
+    telegram_thread.start()
+    pyrogram_thread.start()
+    
+    # Give the bots time to start
+    time.sleep(2)
+    
+    print("Starting Flask app...")
+    # Run Flask in the main thread
+    socketio.run(app, port=5001, debug=False, allow_unsafe_werkzeug=True) 
