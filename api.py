@@ -515,31 +515,53 @@ async def approve_and_dm(client: Client, join_request: ChatJoinRequest):
     user = join_request.from_user
     chat = join_request.chat
 
-    try:
-        await client.approve_chat_join_request(chat.id, user.id)
-        print(f"Approved: {user.first_name} ({user.id}) in {chat.title}")
+    print(f"🔔 Join request received from {user.first_name} ({user.id}) for {chat.title}")
+    print(f"🔧 CHAT_ID: {CHAT_ID}, chat.id: {chat.id}")
 
-        # Add user to DB (reuse add_user from api.py)
+    try:
+        # Approve the join request
+        await client.approve_chat_join_request(chat.id, user.id)
+        print(f"✅ Approved: {user.first_name} ({user.id}) in {chat.title}")
+
+        # Add user to DB
         from datetime import datetime
         full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
         username = user.username or ''
         join_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         invite_link = None  # Pyrogram does not provide invite_link in join request
         add_user(user.id, full_name, username, join_date, invite_link)
+        print(f"💾 User {user.first_name} ({user.id}) added to database")
 
+        # Send welcome message
         try:
+            welcome_message = WELCOME_TEXT.format(mention=user.mention, title=chat.title)
+            print(f"📝 Sending welcome message to {user.first_name} ({user.id}): {welcome_message}")
+            
             await client.send_message(
                 user.id,
-                WELCOME_TEXT.format(mention=user.mention, title=chat.title)
+                welcome_message
             )
-            print(f"DM sent to {user.first_name} ({user.id})")
+            print(f"✅ DM sent successfully to {user.first_name} ({user.id})")
         except Exception as e:
-            print(f"Failed to send DM to {user.first_name} ({user.id}): {e}")
+            print(f"❌ Failed to send DM to {user.first_name} ({user.id}): {e}")
+            print(f"🔍 Error type: {type(e).__name__}")
+            print(f"🔍 Error details: {str(e)}")
+            
+            # Try to get more specific error information
+            if "Forbidden" in str(e):
+                print(f"⚠️ User {user.first_name} ({user.id}) has blocked the bot or doesn't allow DMs")
+            elif "User not found" in str(e):
+                print(f"⚠️ User {user.first_name} ({user.id}) not found - may have deleted account")
+            elif "Chat not found" in str(e):
+                print(f"⚠️ Chat not found for user {user.first_name} ({user.id})")
+                
     except Exception as e:
         if "User_already_participant" in str(e) or "USER_ALREADY_PARTICIPANT" in str(e):
-            print(f"User {user.first_name} ({user.id}) is already a participant in {chat.title}")
+            print(f"ℹ️ User {user.first_name} ({user.id}) is already a participant in {chat.title}")
         else:
-            print(f"Error approving join request for {user.first_name} ({user.id}): {e}")
+            print(f"❌ Error approving join request for {user.first_name} ({user.id}): {e}")
+            print(f"🔍 Error type: {type(e).__name__}")
+            print(f"🔍 Full error: {str(e)}")
 
 
 @app.route('/chat/<int:user_id>', methods=['POST'])
@@ -719,41 +741,61 @@ def on_join(data):
     join_room(room)
 
 if __name__ == '__main__':
-    import threading
+    import multiprocessing
     import time
+    import os
+    
+    print("🚀 Starting AutoJOIN Bot Application...")
+    print(f"🔧 CHAT_ID: {CHAT_ID}")
+    print(f"🔧 BOT_TOKEN: {BOT_TOKEN[:10]}...")
+    print(f"🔧 API_ID: {config.API_ID}")
+    print(f"🔧 API_HASH: {config.API_HASH[:10]}...")
     
     def run_telegram_bot():
-        """Run Telegram bot in a thread"""
-        print("Telegram bot running and waiting for user messages...")
+        """Run Telegram bot in a separate process"""
+        print("🤖 Telegram bot starting in separate process...")
         import asyncio
+        import signal
+        
+        # Disable signal handlers for this process
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            loop.run_until_complete(application.run_polling())
+            loop.run_until_complete(application.run_polling(drop_pending_updates=True))
         except Exception as e:
-            print(f"Telegram bot error: {e}")
+            print(f"❌ Telegram bot error: {e}")
     
     def run_pyrogram_bot():
-        """Run Pyrogram bot in a thread"""
-        print("Pyrogram bot running and waiting for join requests...")
+        """Run Pyrogram bot in a separate process"""
+        print("🔥 Pyrogram bot starting in separate process...")
         import asyncio
+        import signal
+        
+        # Disable signal handlers for this process
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(pyro_app.run())
         except Exception as e:
-            print(f"Pyrogram bot error: {e}")
+            print(f"❌ Pyrogram bot error: {e}")
     
-    # Start bots in separate threads
-    telegram_thread = threading.Thread(target=run_telegram_bot, daemon=True)
-    pyrogram_thread = threading.Thread(target=run_pyrogram_bot, daemon=True)
+    # Start bots in separate processes
+    telegram_process = multiprocessing.Process(target=run_telegram_bot, daemon=True)
+    pyrogram_process = multiprocessing.Process(target=run_pyrogram_bot, daemon=True)
     
-    telegram_thread.start()
-    pyrogram_thread.start()
+    telegram_process.start()
+    pyrogram_process.start()
     
     # Give the bots time to start
-    time.sleep(2)
+    print("⏳ Waiting for bots to initialize...")
+    time.sleep(3)
     
-    print("Starting Flask app...")
-    # Run Flask in the main thread
+    print("🌐 Starting Flask app...")
+    # Run Flask in the main process
     socketio.run(app, port=5001, debug=False, allow_unsafe_werkzeug=True) 
