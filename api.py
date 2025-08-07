@@ -30,19 +30,25 @@ from telegram.request import HTTPXRequest as Request
 app = Flask(__name__)
 app.secret_key = 'change_this_secret_key'
 
-# Production CORS configuration
+# Render CORS configuration
 CORS(app, origins=[
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://admin-o7ei.onrender.com",
     "https://admin-o7ei.onrender.com/",
-    "https://admin-o7ei.onrender.com/",
-    "https://admin-o7ei.onrender.com/",  # Update with your Render URL
-    "https://apiserverjoin-production.up.railway.app"   # Update with your Railway URL
+    "https://apiserverjoin.onrender.com",
+    "https://apiserverjoin.onrender.com",
+    "https://apiserverjoin.onrender.com"
 ], supports_credentials=True)
 
 socketio = SocketIO(app, async_mode='threading', cors_allowed_origins=[
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://admin-o7ei.onrender.com",
     "https://admin-o7ei.onrender.com/",
-    "https://admin-o7ei.onrender.com/",
-    "https://admin-o7ei.onrender.com",  # Update with your Render URL
-    "https://apiserverjoin-production.up.railway.app"   # Update with your Railway URL
+    "https://apiserverjoin.onrender.com",
+    "https://apiserverjoin.onrender.com",
+    "https://apiserverjoin.onrender.com"
 ])
 
 DB_NAME = 'users.db'
@@ -797,5 +803,12 @@ if __name__ == '__main__':
     time.sleep(3)
     
     print("🌐 Starting Flask app...")
+    
+    # Get port from environment variable (Render sets PORT)
+    port = int(os.environ.get('PORT', 5001))
+    host = '0.0.0.0'  # Bind to all interfaces for Render
+    
+    print(f"🚀 Server starting on {host}:{port}")
+    
     # Run Flask in the main process
-    socketio.run(app, port=5001, debug=False, allow_unsafe_werkzeug=True) 
+    socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True) 
