@@ -76,9 +76,7 @@ CORS(app, origins=[
     "http://10.0.0.2:3000",     # Common local network
     "https://admin-o7ei.onrender.com",
     "https://admin-o7ei.onrender.com/",
-    "https://apiserverjoin.onrender.com",
-    "https://apiserverjoin.onrender.com",
-    "https://apiserverjoin.onrender.com"
+    "https://apiserverjoin-production.up.railway.app"
 ], supports_credentials=True)
 
 # Use eventlet for better compatibility
@@ -94,9 +92,7 @@ socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
     "http://10.0.0.2:3000",     # Common local network
     "https://admin-o7ei.onrender.com",
     "https://admin-o7ei.onrender.com/",
-    "https://apiserverjoin.onrender.com",
-    "https://apiserverjoin.onrender.com",
-    "https://apiserverjoin.onrender.com"
+    "https://apiserverjoin-production.up.railway.app"
 ])
 
 DB_NAME = 'users.db'
