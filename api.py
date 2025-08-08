@@ -76,7 +76,12 @@ CORS(app, origins=[
     "http://10.0.0.2:3000",     # Common local network
     "https://admin-o7ei.onrender.com",
     "https://admin-o7ei.onrender.com/",
-    "https://apiserverjoin-production.up.railway.app"
+    "https://admin-aa3r.onrender.com",  # Current Render frontend
+    "https://admin-aa3r.onrender.com/", # Current Render frontend
+    "https://apiserverjoin.onrender.com",
+    "https://apiserverjoin.onrender.com",
+    "https://apiserverjoin.onrender.com",
+    "*"  # Allow all origins as fallback
 ], supports_credentials=True)
 
 # Use eventlet for better compatibility
@@ -92,7 +97,12 @@ socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
     "http://10.0.0.2:3000",     # Common local network
     "https://admin-o7ei.onrender.com",
     "https://admin-o7ei.onrender.com/",
-    "https://apiserverjoin-production.up.railway.app"
+    "https://admin-aa3r.onrender.com",  # Current Render frontend
+    "https://admin-aa3r.onrender.com/", # Current Render frontend
+    "https://apiserverjoin.onrender.com",
+    "https://apiserverjoin.onrender.com",
+    "https://apiserverjoin.onrender.com",
+    "*"  # Allow all origins as fallback
 ])
 
 DB_NAME = 'users.db'
@@ -130,7 +140,11 @@ def migrate_database():
         print("✅ created_at column exists")
     except sqlite3.OperationalError:
         print("🔄 Adding created_at column...")
-        c.execute('ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+        # Use a simple approach without default value to avoid SQLite limitation
+        c.execute('ALTER TABLE users ADD COLUMN created_at TEXT')
+        # Update existing rows with current timestamp
+        current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        c.execute('UPDATE users SET created_at = ? WHERE created_at IS NULL', (current_time,))
         print("✅ created_at column added")
     
     conn.commit()
@@ -260,7 +274,7 @@ def add_user(user_id, full_name, username, join_date, invite_link=None, photo_ur
                   label TEXT,
                   referred_by INTEGER,
                   referral_count INTEGER DEFAULT 0,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                  created_at TEXT)''')
     
     # Check if referred_by column exists, if not add it
     try:
@@ -284,10 +298,13 @@ def add_user(user_id, full_name, username, join_date, invite_link=None, photo_ur
     except sqlite3.OperationalError:
         # Column doesn't exist, add it
         print("Adding created_at column to users table...")
-        c.execute('ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
+        c.execute('ALTER TABLE users ADD COLUMN created_at TEXT')
     
-    c.execute('INSERT OR IGNORE INTO users (user_id, full_name, username, join_date, invite_link, photo_url, label, referred_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-              (user_id, full_name, username, join_date, invite_link, photo_url, label, referred_by))
+    # Set current timestamp for new users
+    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    c.execute('INSERT OR IGNORE INTO users (user_id, full_name, username, join_date, invite_link, photo_url, label, referred_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              (user_id, full_name, username, join_date, invite_link, photo_url, label, referred_by, current_time))
     
     # If this user was referred by someone, update the referrer's count
     if referred_by:
