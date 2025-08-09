@@ -1,5 +1,5 @@
 BOT_TOKEN = '8225123033:AAHJGRJ_TefMUGS0LrM_Lyv1bQIPewhZ2aA'
-ADMIN_USER_ID = 6251161332  # Replace with your Telegram user ID 
+ADMIN_USER_ID = 7628795635  # Replace with your Telegram user ID 
 DASHBOARD_PASSWORD = 'cpode'  # Change this to a strong password 
 WELCOME_MESSAGE = (
     "👋 Welcome to our Telegram group!\n\n"
@@ -18,4 +18,5 @@ API_HASH = "4fcbc414da34a43d86eca15e1235d2ae"
 CHAT_ID = -1002753549748  # Channel/Group ID (as integer, not string)
 
 WELCOME_TEXT = "👋 Welcome to our Telegram group!\n\nWe're excited to have you join our community. Here you can connect, share, and learn with others.\n\nPlease be respectful and follow the group guidelines. If you have any questions, feel free to ask.\n\nEnjoy your stay!"
+
 
