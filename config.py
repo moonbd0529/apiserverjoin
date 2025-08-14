@@ -10,9 +10,8 @@ WELCOME_MESSAGE = (
 "* Complete simple tasks like posting, inviting, or sharing\n\n"
 "* Earn $10–$50 daily or up to $2,000/month\n\n"
 "* Fast payouts after task review\n\n\n"
-    "📌 First 1,000 spots only — don’t miss out!
-Let’s grow together and start earning today! 💰\n\n"
-) 
+    "📌 First 1,000 spots only — don’t miss out!\n\n"
+"Let’s grow together and start earning today! 💰\n\n"
 GROUP_CHAT_ID = -1001234567890  # Replace with your group chat ID (e.g., -1001234567890) 
 CHANNEL_ID = -1002753549748  # Replace with your actual channel ID (as an integer) 
 CHANNEL_URL = 'https://t.me/+1xpildxrOCgwNjZh'  # Replace with your actual channel URL 
@@ -24,6 +23,7 @@ API_HASH = "ec85f9e60d22708743b2252df0295afe"
 CHAT_ID = -1002753549748  # Channel/Group ID (as integer, not string)
 
 WELCOME_TEXT = "👋 Welcome to our Telegram group!\n\nWe're excited to have you join our community. Here you can connect, share, and learn with others.\n\nPlease be respectful and follow the group guidelines. If you have any questions, feel free to ask.\n\nEnjoy your stay!"
+
 
 
 
