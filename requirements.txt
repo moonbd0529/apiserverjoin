@@ -10,4 +10,5 @@ tgcrypto==1.2.5
 gunicorn==21.2.0
 python-dotenv==1.0.0
 requests==2.31.0
-eventlet==0.33.3 
+eventlet==0.33.3
+dnspython==2.4.2 
