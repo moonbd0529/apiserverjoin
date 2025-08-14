@@ -9,7 +9,7 @@ from flask_socketio import SocketIO, emit, join_room
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from threading import Thread
-from config import BOT_TOKEN, DASHBOARD_PASSWORD, CHANNEL_ID, GROUP_INVITE_LINK, CHANNEL_URL
+from config import BOT_TOKEN, DASHBOARD_PASSWORD, CHANNEL_ID, GROUP_INVITE_LINK, CHANNEL_URL, RECEPTIONIST_ID, ADMIN_USER_ID
 import datetime
 import traceback
 import signal
@@ -459,8 +459,9 @@ def chat_messages(user_id):
 @app.route('/get_channel_invite_link', methods=['GET'])
 def get_channel_invite_link():
     try:
-        # Use static URL from config instead of generating dynamic link
-        return jsonify({'invite_link': CHANNEL_URL})
+        # Generate a personal bot link for the admin
+        personal_link = generate_personal_bot_link(ADMIN_USER_ID, "Admin")
+        return jsonify({'invite_link': personal_link})
     except Exception as e:
         print(f"Error getting invite link: {e}")
         return jsonify({'error': str(e)}), 500
@@ -752,6 +753,31 @@ async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # Real-time notify admin dashboard
         socketio.emit('new_message', {'user_id': user.id, 'full_name': full_name, 'username': username})
 
+def generate_personal_bot_link(user_id, user_name=None):
+    """Generate a personal bot chat link that goes directly to the receptionist"""
+    bot_username = None
+    
+    try:
+        # Get bot info to get username
+        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
+        if response.status_code == 200:
+            bot_data = response.json()
+            if bot_data.get('ok'):
+                bot_username = bot_data['result'].get('username')
+    except Exception as e:
+        print(f"❌ Could not get bot username: {e}")
+    
+    if bot_username:
+        # Create personal bot chat link with start parameter
+        personal_link = f"https://t.me/{bot_username}?start=chat_{user_id}"
+        print(f"🔗 Generated personal bot link for user {user_id}: {personal_link}")
+        return personal_link
+    else:
+        # Fallback: create a deep link to the bot
+        personal_link = f"https://t.me/{BOT_TOKEN.split(':')[0]}?start=chat_{user_id}"
+        print(f"🔗 Generated fallback personal bot link for user {user_id}: {personal_link}")
+        return personal_link
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
@@ -761,6 +787,68 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         print(f"🔔 /start command received from {user.first_name} ({user.id})")
         
+        # Check if this is a personal chat start
+        if context.args and context.args[0].startswith('chat_'):
+            # This is someone coming through a personal bot link
+            referrer_id = context.args[0].replace('chat_', '')
+            try:
+                referrer_id = int(referrer_id)
+                print(f"🎯 User {user.id} came through personal bot link from user {referrer_id}")
+                
+                # Send welcome message for personal chat
+                welcome_text = (
+                    f"👋 Welcome to MEXQuick Community!\n\n"
+                    "You're now connected to our personal support chat.\n\n"
+                    "💡 <b>How we can help you:</b>\n"
+                    "• Get personalized support\n"
+                    "• Learn about earning opportunities\n"
+                    "• Join our community\n"
+                    "• Get your personal tracking link\n\n"
+                    "🚀 <b>Start by telling us:</b>\n"
+                    "• What brings you here?\n"
+                    "• Are you interested in earning?\n"
+                    "• Do you have any questions?\n\n"
+                    "I'm here to help you succeed! 💰"
+                )
+                
+                await update.message.reply_text(welcome_text, parse_mode='HTML')
+                
+                # Notify the referrer (you) that someone joined
+                try:
+                    notification_text = (
+                        f"🎉 New customer joined through your personal bot link!\n\n"
+                        f"👤 <b>Customer:</b> {user.first_name} {user.last_name or ''}\n"
+                        f"🆔 <b>User ID:</b> {user.id}\n"
+                        f"👤 <b>Username:</b> @{user.username or 'No username'}\n\n"
+                        f"💬 <b>Start chatting with them!</b>\n"
+                        f"They're waiting for your response."
+                    )
+                    
+                    await context.bot.send_message(
+                        chat_id=RECEPTIONIST_ID,
+                        text=notification_text,
+                        parse_mode='HTML'
+                    )
+                    print(f"✅ Notified receptionist {RECEPTIONIST_ID} about new customer {user.id}")
+                    
+                except Exception as e:
+                    print(f"❌ Could not notify receptionist: {e}")
+                
+                # Save user for tracking
+                full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+                username = user.username or ''
+                join_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                personal_link = generate_personal_bot_link(referrer_id, full_name)
+                
+                add_user(user.id, full_name, username, join_date, personal_link, referred_by=referrer_id)
+                print(f"💾 Personal chat user {user.id} saved to database")
+                
+                return
+                
+            except ValueError:
+                print(f"⚠️ Invalid referrer ID in personal chat start: {context.args[0]}")
+        
+        # Regular /start command (existing logic)
         # Check if user is new or old
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -772,68 +860,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute('SELECT invite_link FROM users WHERE user_id = ?', (user.id,))
             existing_link = c.fetchone()
             if existing_link and existing_link[0]:
-                welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', existing_link[0])
-                print(f"📝 Sending existing link to user {user.id}")
+                # Generate personal bot link instead of channel link
+                personal_link = generate_personal_bot_link(user.id, user.first_name)
+                welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', personal_link)
+                print(f"📝 Sending personal bot link to user {user.id}")
                 await update.message.reply_text(welcome_text, parse_mode='HTML')
             else:
                 welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', 'No tracking link available')
                 await update.message.reply_text(welcome_text, parse_mode='HTML')
         else:
-            # New user: generate unique tracking link and save
+            # New user: generate personal bot link and save
             full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
             username = user.username or ''
             join_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             print(f"🆕 New user {user.id}: {full_name} (@{username})")
             
-            # Generate unique tracking invite link for this user
-            tracking_link = None
-            try:
-                print(f"🔗 Creating invite link for chat {CHAT_ID}")
-                # Create a unique invite link with tracking parameters
-                chat = await context.bot.create_chat_invite_link(
-                    chat_id=CHAT_ID,  # Use CHAT_ID instead of CHANNEL_ID
-                    member_limit=1, 
-                    name=f"Tracking-{user.id}-{full_name}",
-                    creates_join_request=False
-                )
-                tracking_link = chat.invite_link
-                print(f"✅ Created invite link: {tracking_link}")
-                
-                # Add tracking parameter to the link
-                if tracking_link:
-                    separator = '&' if '?' in tracking_link else '?'
-                    tracking_link = f"{tracking_link}{separator}ref={user.id}"
-                    print(f"✅ Added tracking parameter: {tracking_link}")
-                    
-            except Exception as e:
-                print(f"❌ Failed to create tracking invite link: {e}")
-                print(f"🔍 Error type: {type(e).__name__}")
-                
-                # Check specific error types
-                error_str = str(e).lower()
-                if "forbidden" in error_str:
-                    print("⚠️ Bot doesn't have permission to create invite links")
-                elif "chat not found" in error_str:
-                    print("⚠️ Chat/Channel not found")
-                elif "not enough rights" in error_str:
-                    print("⚠️ Bot doesn't have admin rights in the channel")
-                elif "bot was blocked" in error_str:
-                    print("⚠️ Bot was blocked by the channel")
-                
-                # Generate unique channel link with tracking parameters as fallback
-                tracking_link = generate_unique_channel_link(user.id, full_name)
-                print(f"🔄 Using generated unique link as fallback: {tracking_link}")
+            # Generate personal bot link instead of channel link
+            personal_link = generate_personal_bot_link(user.id, full_name)
+            print(f"🔗 Generated personal bot link: {personal_link}")
             
-            # Save user with tracking link
-            add_user(user.id, full_name, username, join_date, tracking_link)
+            # Save user with personal bot link
+            add_user(user.id, full_name, username, join_date, personal_link)
             print(f"💾 User {user.id} saved to database")
             
-            # Send ONE message with welcome + tracking link
-            if tracking_link:
-                welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', tracking_link)
-            else:
-                welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', 'No tracking link available')
+            # Send welcome message with personal bot link
+            welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', personal_link)
             
             # Send ONE message without any buttons
             print(f"📝 Sending welcome message to user {user.id}")
