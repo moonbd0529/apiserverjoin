@@ -871,16 +871,28 @@ def generate_personal_tracking_link(user_id, user_name=None):
     if cache_key in LINK_CACHE:
         return LINK_CACHE[cache_key]
     
-    # Use cached bot username if available
+    # Force get bot username if not cached
+    bot_username = None
     if BOT_USERNAME_CACHE:
         bot_username = BOT_USERNAME_CACHE
     else:
-        # Fallback: try to get bot username from config or token
+        # Try to get bot username from Telegram API
         try:
-            # Try to extract username from bot token (this won't work, but it's a fallback)
-            bot_username = BOT_TOKEN.split(':')[0]
-        except:
-            bot_username = None
+            response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
+            if response.status_code == 200:
+                bot_data = response.json()
+                if bot_data.get('ok'):
+                    bot_username = bot_data['result'].get('username')
+                    # Cache the username
+                    BOT_USERNAME_CACHE = bot_username
+                    print(f"🤖 Bot username detected: @{bot_username}")
+        except Exception as e:
+            print(f"❌ Could not get bot username: {e}")
+    
+    # If still no username, use the known bot username
+    if not bot_username:
+        bot_username = "chatcustomer_bot"  # Use the known bot username
+        print(f"🔧 Using known bot username: @{bot_username}")
     
     # Generate unique parameters for personal tracking
     import random
@@ -890,16 +902,10 @@ def generate_personal_tracking_link(user_id, user_name=None):
     random_seed = random.randint(100000, 999999)
     session_id = hashlib.md5(f"{user_id}_{timestamp}_{random_seed}".encode()).hexdigest()[:6]
     
-    if bot_username and bot_username != BOT_TOKEN.split(':')[0]:
-        # Create personal bot chat link with enhanced tracking parameters
-        tracking_param = f"ref_{user_id}_{session_id}_{random_seed}"
-        personal_link = f"https://t.me/{bot_username}?start={tracking_param}"
-        print(f"🔗 Generated personal tracking link for user {user_id}: {personal_link}")
-    else:
-        # Fallback: create a deep link to the bot with enhanced parameters
-        tracking_param = f"ref_{user_id}_{session_id}_{random_seed}"
-        personal_link = f"https://t.me/{BOT_TOKEN.split(':')[0]}?start={tracking_param}"
-        print(f"🔗 Generated fallback personal tracking link for user {user_id}: {personal_link}")
+    # Create personal bot chat link with enhanced tracking parameters
+    tracking_param = f"ref_{user_id}_{session_id}_{random_seed}"
+    personal_link = f"https://t.me/{bot_username}?start={tracking_param}"
+    print(f"🔗 Generated personal tracking link for user {user_id}: {personal_link}")
     
     # Cache the result
     LINK_CACHE[cache_key] = personal_link
@@ -3181,6 +3187,56 @@ def admin_get_recent_tracking_activity():
         
     except Exception as e:
         print(f"Error getting recent tracking activity: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/test-bot-username', methods=['GET'])
+def test_bot_username():
+    """Test endpoint to check bot username detection and generate working links"""
+    try:
+        global BOT_USERNAME_CACHE
+        
+        # Clear cache to force fresh detection
+        BOT_USERNAME_CACHE = None
+        
+        # Test bot username detection
+        bot_username = None
+        try:
+            response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
+            if response.status_code == 200:
+                bot_data = response.json()
+                if bot_data.get('ok'):
+                    bot_username = bot_data['result'].get('username')
+                    BOT_USERNAME_CACHE = bot_username
+                    print(f"✅ Bot username detected: @{bot_username}")
+                else:
+                    print(f"❌ Bot API error: {bot_data}")
+            else:
+                print(f"❌ HTTP error: {response.status_code}")
+        except Exception as e:
+            print(f"❌ Error getting bot info: {e}")
+        
+        # If no username detected, use known one
+        if not bot_username:
+            bot_username = "chatcustomer_bot"
+            print(f"🔧 Using known bot username: @{bot_username}")
+        
+        # Generate test links
+        test_user_id = ADMIN_USER_ID
+        test_links = {
+            'personal_tracking': generate_personal_tracking_link(test_user_id, "Test User"),
+            'custom_customer': generate_custom_customer_link(test_user_id, "Test User", "Test Customer")
+        }
+        
+        return jsonify({
+            'status': 'success',
+            'bot_username': bot_username,
+            'bot_username_cached': BOT_USERNAME_CACHE,
+            'test_links': test_links,
+            'message': f'Bot username: @{bot_username}. Test links generated successfully!'
+        })
+        
+    except Exception as e:
+        print(f"Error testing bot username: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
