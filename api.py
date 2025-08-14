@@ -932,18 +932,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     # Send welcome message for personal chat
                     welcome_text = (
-                        f"👋 Welcome to MEXQuick Community!\n\n"
-                        "You're now connected to our personal support chat.\n\n"
-                        "💡 <b>How we can help you:</b>\n"
-                        "• Get personalized support\n"
-                        "• Learn about earning opportunities\n"
-                        "• Join our community\n"
-                        "• Get your personal tracking link\n\n"
-                        "🚀 <b>Start by telling us:</b>\n"
-                        "• What brings you here?\n"
-                        "• Are you interested in earning?\n"
-                        "• Do you have any questions?\n\n"
-                        "I'm here to help you succeed! 💰"
+                        f    "Welcome to MEXQuick Community! 🚀\n"
+                                "You're now connected to one of the world's fastest-growing earning platforms, with members from 150+ countries.\n\n"
+                                "💡 With us you can:\n\n"
+                                "* Work from your phone or computer — anywhere, anytime\n"
+                                "* No fees, no deposits, no experience needed\n"
+                                "* Complete simple tasks like posting, inviting, or sharing\n"
+                                "* Earn $10–$50 daily or up to $2,000/month\n"
+                                "* Fast payouts after task review\n\n"
+                                "📌 <b>First 1,000 spots only — don't miss out!</b>\n"
+                                "<b>Let's grow together and start earning today! 💰</b>\n"
                     )
                     
                     await update.message.reply_text(welcome_text, parse_mode='HTML')
