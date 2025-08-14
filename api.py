@@ -3370,16 +3370,61 @@ def check_bot_processes():
 
 @app.route('/health')
 def health_check():
-    """Simple health check endpoint that also initializes bots"""
-    # Initialize bots on health check
-    initialize_bots_on_first_request()
+    """Health check endpoint that also initializes bots for Railway"""
+    try:
+        # Initialize bots if not running
+        initialize_bots_on_first_request()
+        
+        # Check bot status
+        telegram_status = "🟢 Running" if telegram_process and telegram_process.is_alive() else "🔴 Not Running"
+        pyrogram_status = "🟢 Running" if pyrogram_process and pyrogram_process.is_alive() else "🔴 Not Running"
+        
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'bot_token': BOT_TOKEN[:10] + '...' if BOT_TOKEN else 'Not configured',
+            'bots': {
+                'telegram': telegram_status,
+                'pyrogram': pyrogram_status,
+                'telegram_pid': telegram_process.pid if telegram_process and telegram_process.is_alive() else None,
+                'pyrogram_pid': pyrogram_process.pid if pyrogram_process and pyrogram_process.is_alive() else None
+            },
+            'receptionist_id': RECEPTIONIST_ID,
+            'admin_user_id': ADMIN_USER_ID,
+            'message': 'Railway deployment ready - bots will start automatically'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }), 500
+
+# Initialize bots for Railway deployment
+print("🚀 Initializing bots for Railway deployment...")
+try:
+    # Import bot functions
+    from api import start_bots, initialize_bots_on_first_request
     
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'bot_token': BOT_TOKEN[:10] + '...' if BOT_TOKEN else 'Not configured',
-        'bots_initialized': telegram_process is not None and telegram_process.is_alive()
-    })
+    # Start bots in background thread for Railway
+    import threading
+    def start_bots_background():
+        try:
+            print("🔄 Starting bots in background thread...")
+            global telegram_process, pyrogram_process
+            telegram_process, pyrogram_process = start_bots()
+            print("✅ Bots started successfully in background thread")
+        except Exception as e:
+            print(f"❌ Error starting bots in background: {e}")
+    
+    # Start bots in background thread
+    bot_thread = threading.Thread(target=start_bots_background, daemon=True)
+    bot_thread.start()
+    print("🔄 Bot startup thread initiated")
+    
+except Exception as e:
+    print(f"⚠️ Could not start bots during initialization: {e}")
+    print("🔄 Bots will start on first request instead")
 
 if __name__ == '__main__':
     import multiprocessing
@@ -3467,3 +3512,6 @@ if __name__ == '__main__':
             pyrogram_process.terminate()
         telegram_process.terminate()
         print("✅ All processes terminated")
+
+print("🚀 Flask app initialized for Railway deployment...")
+print("🔄 Bots will start on first request or health check...")
