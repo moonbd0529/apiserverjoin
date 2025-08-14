@@ -23,7 +23,7 @@ from telegram.ext import ChatJoinRequestHandler
 
 from pyrogram import Client, filters
 from pyrogram.types import ChatJoinRequest
-import config  # config.py should have BOT_TOKEN, API_ID, API_HASH, CHAT_ID, WELCOME_TEXT
+import config  # config.py should have BOT_TOKEN, API_ID, API_HASH, CHAT_ID, WELCOME_MESSAGE
 
 from telegram.ext import filters as tg_filters
 from pyrogram import filters as pyro_filters
@@ -772,16 +772,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute('SELECT invite_link FROM users WHERE user_id = ?', (user.id,))
             existing_link = c.fetchone()
             if existing_link and existing_link[0]:
-                welcome_text = (
-                    "👋 Welcome back!\n\n"
-                    "Here's your personal tracking link:\n"
-                    f"{existing_link[0]}\n\n"
-                    "Share this link to track new users who join through it!"
-                )
+                welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', existing_link[0])
                 print(f"📝 Sending existing link to user {user.id}")
-                await update.message.reply_text(welcome_text)
+                await update.message.reply_text(welcome_text, parse_mode='HTML')
             else:
-                await update.message.reply_text("👋 Welcome back! You can chat with me here anytime.")
+                welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', 'No tracking link available')
+                await update.message.reply_text(welcome_text, parse_mode='HTML')
         else:
             # New user: generate unique tracking link and save
             full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
@@ -828,62 +824,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Generate unique channel link with tracking parameters as fallback
                 tracking_link = generate_unique_channel_link(user.id, full_name)
                 print(f"🔄 Using generated unique link as fallback: {tracking_link}")
-                
-                # Send a helpful message to the user
-                await update.message.reply_text(
-                    "🎉 Welcome to our community!\n\n"
-                    "I've generated your personal tracking link using our fallback system.\n"
-                    "This link will work perfectly for tracking your referrals!\n\n"
-                    "💡 **Note:** If you need a Telegram invite link, please contact an admin to add me as an administrator to the channel."
-                )
             
             # Save user with tracking link
             add_user(user.id, full_name, username, join_date, tracking_link)
             print(f"💾 User {user.id} saved to database")
             
-            # Send welcome message with tracking link
+            # Send ONE message with welcome + tracking link
             if tracking_link:
-                welcome_text = (
-                    "🎉 Welcome to our community!\n\n"
-                    "Here's your personal tracking link:\n"
-                    f"{tracking_link}\n\n"
-                    "📊 **How it works:**\n"
-                    "• Share this link with others\n"
-                    "• When someone joins through your link, we'll track it\n"
-                    "• You'll get credit for bringing new members\n\n"
-                    "💡 **Benefits:**\n"
-                    "• Track your referrals\n"
-                    "• Earn rewards for bringing new users\n"
-                    "• Build your network\n\n"
-                    "Start sharing and growing your network! 🚀"
-                )
-                
-                # Send message without any buttons
-                print(f"📝 Sending welcome message to user {user.id}")
-                await update.message.reply_text(
-                    welcome_text,
-                    parse_mode='Markdown'
-                )
-                print(f"✅ Welcome message sent to user {user.id}")
+                welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', tracking_link)
             else:
-                # Fallback message when no tracking link is available
-                welcome_text = (
-                    "🎉 Welcome to our community!\n\n"
-                    "We're glad to have you here!\n\n"
-                    "💡 **What you can do:**\n"
-                    "• Chat with me anytime\n"
-                    "• Get help and support\n"
-                    "• Connect with other members\n\n"
-                    "If you need your personal tracking link, please contact an admin."
-                )
-                
-                # Send message without any buttons
-                print(f"📝 Sending welcome message to user {user.id}")
-                await update.message.reply_text(
-                    welcome_text,
-                    parse_mode='Markdown'
-                )
-                print(f"✅ Welcome message sent to user {user.id}")
+                welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', 'No tracking link available')
+            
+            # Send ONE message without any buttons
+            print(f"📝 Sending welcome message to user {user.id}")
+            await update.message.reply_text(
+                welcome_text,
+                parse_mode='HTML'
+            )
+            print(f"✅ Welcome message sent to user {user.id}")
         
         conn.close()
         
@@ -968,29 +926,9 @@ async def approve_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send welcome DM
         if referred_by:
             # Custom welcome for referred users
-            welcome_message = (
-                f"🎉 **Welcome to our community, {full_name}!**\n\n"
-                "🌟 **You were invited by a member of our community!**\n\n"
-                "📋 **What you can do here:**\n"
-                "• Chat with other members\n"
-                "• Share your thoughts and ideas\n"
-                "• Get help and support\n"
-                "• Make new friends\n\n"
-                "💡 **Pro tip:** Send /start to get your own tracking link and start earning rewards!\n\n"
-                "🚀 **Enjoy your stay!**"
-            )
+            welcome_message = config.WELCOME_MESSAGE
         else:
-            welcome_message = (
-                f"🎉 **Welcome to our community, {full_name}!**\n\n"
-                "🌟 **You are now a member of our channel!**\n\n"
-                "📋 **What you can do here:**\n"
-                "• Chat with other members\n"
-                "• Share your thoughts and ideas\n"
-                "• Get help and support\n"
-                "• Make new friends\n\n"
-                "💡 **Pro tip:** Send /start to get your own tracking link and start earning rewards!\n\n"
-                "🚀 **Enjoy your stay!**"
-            )
+            welcome_message = config.WELCOME_MESSAGE
         
         try:
             print(f"📝 Telegram bot: Sending welcome message to {user.first_name} ({user.id})")
@@ -1025,12 +963,7 @@ async def approve_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Try to send a message in the channel instead
                 try:
-                    channel_message = (
-                        f"🎉 **Welcome {full_name} to our community!**\n\n"
-                        "🌟 **You are now a member!**\n\n"
-                        "💡 **Pro tip:** Send /start to the bot to get your personal tracking link and start earning rewards!\n\n"
-                        "🚀 **Enjoy your stay!**"
-                    )
+                    channel_message = config.WELCOME_MESSAGE
                     await context.bot.send_message(chat_id=CHAT_ID, text=channel_message)
                     print(f"✅ Sent welcome message to channel for user {user.id}")
                 except Exception as channel_error:
@@ -1076,7 +1009,7 @@ pyro_app = Client(
 )
 
 CHAT_ID = config.CHAT_ID
-WELCOME_TEXT = getattr(config, "WELCOME_TEXT", "🎉 Hi {mention}, you are now a member of {title}!")
+WELCOME_TEXT = config.WELCOME_MESSAGE
 
 # Test Pyrogram connection
 async def test_pyrogram_connection():
@@ -1152,29 +1085,9 @@ async def approve_and_dm(client: Client, join_request: ChatJoinRequest):
         try:
             if referred_by:
                 # Custom welcome for referred users
-                welcome_message = (
-                    f"🎉 **Welcome to our community, {full_name}!**\n\n"
-                    "🌟 **You were invited by a member of our community!**\n\n"
-                    "📋 **What you can do here:**\n"
-                    "• Chat with other members\n"
-                    "• Share your thoughts and ideas\n"
-                    "• Get help and support\n"
-                    "• Make new friends\n\n"
-                    "💡 **Pro tip:** Send /start to get your own tracking link and start earning rewards!\n\n"
-                    "🚀 **Enjoy your stay!**"
-                )
+                welcome_message = config.WELCOME_MESSAGE
             else:
-                welcome_message = (
-                    f"🎉 **Welcome to our community, {full_name}!**\n\n"
-                    "🌟 **You are now a member of our channel!**\n\n"
-                    "📋 **What you can do here:**\n"
-                    "• Chat with other members\n"
-                    "• Share your thoughts and ideas\n"
-                    "• Get help and support\n"
-                    "• Make new friends\n\n"
-                    "💡 **Pro tip:** Send /start to get your own tracking link and start earning rewards!\n\n"
-                    "🚀 **Enjoy your stay!**"
-                )
+                welcome_message = config.WELCOME_MESSAGE
             
             print(f"📝 Sending welcome message to {user.first_name} ({user.id})")
             print(f"📝 Message: {welcome_message}")
@@ -1219,12 +1132,7 @@ async def approve_and_dm(client: Client, join_request: ChatJoinRequest):
                 
             # Try to send a message in the channel instead
             try:
-                channel_message = (
-                    f"🎉 **Welcome {full_name} to our community!**\n\n"
-                    "🌟 **You are now a member!**\n\n"
-                    "💡 **Pro tip:** Send /start to the bot to get your personal tracking link and start earning rewards!\n\n"
-                    "🚀 **Enjoy your stay!**"
-                )
+                channel_message = config.WELCOME_MESSAGE
                 await client.send_message(chat_id=CHAT_ID, text=channel_message)
                 print(f"✅ Sent welcome message to channel for user {user.id}")
             except Exception as channel_error:
