@@ -2218,15 +2218,6 @@ def get_receptionist_id():
         'is_auto_set': RECEPTIONIST_ID is not None
     })
 
-@app.route('/health')
-def health_check():
-    """Simple health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'bot_token': BOT_TOKEN[:10] + '...' if BOT_TOKEN else 'Not configured'
-        })
-
 @app.route('/')
 def index():
     return "Hello, world!"
@@ -3238,6 +3229,157 @@ def test_bot_username():
     except Exception as e:
         print(f"Error testing bot username: {e}")
         return jsonify({'error': str(e)}), 500
+
+def start_bots():
+    """Start bot processes - can be called by Railway or other deployment platforms"""
+    import multiprocessing
+    import time
+    import os
+    import requests
+    import asyncio
+    
+    print("🚀 Starting AutoJOIN Bot Application...")
+    print(f"🔧 CHAT_ID: {CHAT_ID}")
+    print(f"🔧 BOT_TOKEN: {BOT_TOKEN[:10]}...")
+    print(f"🔧 API_ID: {config.API_ID}")
+    print(f"🔧 API_HASH: {config.API_HASH[:10]}...")
+    
+    # Initialize RECEPTIONIST_ID automatically
+    print("🤖 Getting bot information to set RECEPTIONIST_ID...")
+    try:
+        # Run the async function in a new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        bot_info = loop.run_until_complete(get_bot_info())
+        loop.close()
+        
+        if RECEPTIONIST_ID:
+            print(f"✅ RECEPTIONIST_ID set to: {RECEPTIONIST_ID}")
+        else:
+            print("❌ Failed to set RECEPTIONIST_ID, using ADMIN_USER_ID as fallback")
+            RECEPTIONIST_ID = ADMIN_USER_ID
+    except Exception as e:
+        print(f"❌ Error setting RECEPTIONIST_ID: {e}")
+        print("⚠️ Using ADMIN_USER_ID as fallback")
+        RECEPTIONIST_ID = ADMIN_USER_ID
+    
+    # Check if bot is already running
+    try:
+        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=5)
+        if response.status_code == 200:
+            print("✅ Bot is accessible")
+        else:
+            print("❌ Bot is not accessible")
+    except Exception as e:
+        print(f"⚠️ Could not check bot status: {e}")
+    
+    # Start bots in separate processes
+    telegram_process = multiprocessing.Process(target=run_telegram_bot, daemon=True)
+    
+    # Check if Pyrogram is available before starting
+    pyrogram_available = False
+    try:
+        import pyrogram
+        pyrogram_available = True
+        print("✅ Pyrogram is available")
+    except ImportError:
+        print("⚠️ Pyrogram not available, skipping Pyrogram bot")
+    
+    if pyrogram_available:
+        pyrogram_process = multiprocessing.Process(target=run_pyrogram_bot, daemon=True)
+        pyrogram_process.start()
+        print("🔥 Pyrogram bot process started")
+    else:
+        pyrogram_process = None
+        print("⚠️ Pyrogram bot process not started (Pyrogram not available)")
+    
+    telegram_process.start()
+    print("🤖 Telegram bot process started")
+    
+    # Give the bots time to start
+    print("⏳ Waiting for bots to initialize...")
+    time.sleep(3)
+    
+    print("✅ Bot processes started successfully!")
+    return telegram_process, pyrogram_process
+
+# Global variables to store bot processes
+telegram_process = None
+pyrogram_process = None
+
+def initialize_bots_on_first_request():
+    """Initialize bots on first request - called by Railway"""
+    global telegram_process, pyrogram_process
+    if telegram_process is None or not telegram_process.is_alive():
+        try:
+            print("🚀 Railway detected - starting bots...")
+            telegram_process, pyrogram_process = start_bots()
+            print("✅ Bots initialized for Railway deployment")
+        except Exception as e:
+            print(f"❌ Error starting bots: {e}")
+
+@app.route('/start-bots', methods=['POST'])
+def manual_start_bots():
+    """Manual endpoint to start bots - useful for Railway deployment"""
+    global telegram_process, pyrogram_process
+    try:
+        if telegram_process is None or not telegram_process.is_alive():
+            print("🚀 Manually starting bots...")
+            telegram_process, pyrogram_process = start_bots()
+            return jsonify({
+                'status': 'success',
+                'message': 'Bots started successfully',
+                'telegram_alive': telegram_process.is_alive() if telegram_process else False,
+                'pyrogram_alive': pyrogram_process.is_alive() if pyrogram_process else False
+            })
+        else:
+            return jsonify({
+                'status': 'already_running',
+                'message': 'Bots are already running',
+                'telegram_alive': telegram_process.is_alive(),
+                'pyrogram_alive': pyrogram_process.is_alive() if pyrogram_process else False
+            })
+    except Exception as e:
+        print(f"❌ Error manually starting bots: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/bot-processes-status', methods=['GET'])
+def check_bot_processes():
+    """Check status of bot processes"""
+    global telegram_process, pyrogram_process
+    
+    # Initialize bots if not running
+    initialize_bots_on_first_request()
+    
+    try:
+        return jsonify({
+            'telegram_bot': {
+                'exists': telegram_process is not None,
+                'alive': telegram_process.is_alive() if telegram_process else False,
+                'pid': telegram_process.pid if telegram_process else None
+            },
+            'pyrogram_bot': {
+                'exists': pyrogram_process is not None,
+                'alive': pyrogram_process.is_alive() if pyrogram_process else False,
+                'pid': pyrogram_process.pid if pyrogram_process else None
+            },
+            'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/health')
+def health_check():
+    """Simple health check endpoint that also initializes bots"""
+    # Initialize bots on health check
+    initialize_bots_on_first_request()
+    
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'bot_token': BOT_TOKEN[:10] + '...' if BOT_TOKEN else 'Not configured',
+        'bots_initialized': telegram_process is not None and telegram_process.is_alive()
+    })
 
 if __name__ == '__main__':
     import multiprocessing
