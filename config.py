@@ -4,8 +4,6 @@ DASHBOARD_PASSWORD = 'cpode'  # Change this to a strong password
 WELCOME_MESSAGE = (
     "Welcome to MEXQuick Community! 🚀\n\n"
     "You're now connected to one of the world's fastest-growing earning platforms, with members from 150+ countries.\n\n"
-    "🔗 <b>Your Personal Tracking Link:</b>\n"
-    "{TRACKING_LINK}\n\n"
     "💡 With us you can:\n\n\n"
     "* Work from your phone or computer — anywhere, anytime\n\n"
 "* No fees, no deposits, no experience needed\n\n"
@@ -25,6 +23,7 @@ GROUP_INVITE_LINK = 'https://t.me/+1xpildxrOCgwNjZh'  # Replace with your actual
 API_ID = "25772743"
 API_HASH = "ec85f9e60d22708743b2252df0295afe"
 CHAT_ID = -1002753549748  # Channel/Group ID (as integer, not string)
+
 
 
 
