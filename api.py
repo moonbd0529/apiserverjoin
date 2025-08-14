@@ -9,7 +9,7 @@ from flask_socketio import SocketIO, emit, join_room
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from threading import Thread
-from config import BOT_TOKEN, DASHBOARD_PASSWORD, CHANNEL_ID, GROUP_INVITE_LINK, CHANNEL_URL, RECEPTIONIST_ID, ADMIN_USER_ID
+from config import BOT_TOKEN, DASHBOARD_PASSWORD, CHANNEL_ID, GROUP_INVITE_LINK, CHANNEL_URL, ADMIN_USER_ID
 import datetime
 import traceback
 import signal
@@ -819,6 +819,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Notify the referrer (you) that someone joined
                 try:
+                    # Ensure RECEPTIONIST_ID is set
+                    if RECEPTIONIST_ID is None:
+                        print("⚠️ RECEPTIONIST_ID not set, using ADMIN_USER_ID")
+                        RECEPTIONIST_ID = ADMIN_USER_ID
+                    
                     notification_text = (
                         f"🎉 New customer joined through your personal bot link!\n\n"
                         f"👤 <b>Customer:</b> {user.first_name} {user.last_name or ''}\n"
@@ -894,7 +899,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Send ONE message without any buttons
             print(f"📝 Sending welcome message to user {user.id}")
             await update.message.reply_text(
-                welcome_text,
+                welcome_text, 
                 parse_mode='HTML'
             )
             print(f"✅ Welcome message sent to user {user.id}")
@@ -965,6 +970,26 @@ async def approve_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Add user with the actual invite link they used
         add_user(user.id, full_name, username, join_date, invite_link, photo_url, referred_by=referred_by)
         print(f"💾 Telegram bot: User {user.first_name} ({user.id}) added to database with invite link: {invite_link}")
+
+        # Notify receptionist about the approved user
+        try:
+            # Ensure RECEPTIONIST_ID is set
+            if RECEPTIONIST_ID is None:
+                print("⚠️ RECEPTIONIST_ID not set, using ADMIN_USER_ID")
+                RECEPTIONIST_ID = ADMIN_USER_ID
+            
+            notification_text = (
+                f"✅ New member approved in {chat.title}\n\n"
+                f"👤 Name: {full_name}\n"
+                f"🆔 User ID: {user.id}\n"
+                f"🌐 Username: @{username or 'No username'}\n"
+                f"🔗 Invite link: {invite_link or 'N/A'}\n"
+                f"👥 Referred by: {referred_by if referred_by else 'N/A'}"
+            )
+            await context.bot.send_message(chat_id=RECEPTIONIST_ID, text=notification_text)
+            print(f"✅ Notified receptionist {RECEPTIONIST_ID} about approved user {user.id}")
+        except Exception as e:
+            print(f"❌ Could not notify receptionist: {e}")
 
         # Send real-time notification to frontend about new user
         socketio.emit('new_user_joined', {
@@ -1124,6 +1149,26 @@ async def approve_and_dm(client: Client, join_request: ChatJoinRequest):
         add_user(user.id, full_name, username, join_date, invite_link, referred_by=referred_by)
         print(f"💾 User {user.first_name} ({user.id}) added to database with invite link: {invite_link}")
 
+        # Notify receptionist about the approved user
+        try:
+            # Ensure RECEPTIONIST_ID is set
+            if RECEPTIONIST_ID is None:
+                print("⚠️ RECEPTIONIST_ID not set, using ADMIN_USER_ID")
+                RECEPTIONIST_ID = ADMIN_USER_ID
+            
+            notification_text = (
+                f"✅ New member approved in {chat.title}\n\n"
+                f"👤 Name: {full_name}\n"
+                f"🆔 User ID: {user.id}\n"
+                f"🌐 Username: @{username or 'No username'}\n"
+                f"🔗 Invite link: {invite_link or 'N/A'}\n"
+                f"👥 Referred by: {referred_by if referred_by else 'N/A'}"
+            )
+            await client.send_message(chat_id=RECEPTIONIST_ID, text=notification_text)
+            print(f"✅ Notified receptionist {RECEPTIONIST_ID} about approved user {user.id}")
+        except Exception as e:
+            print(f"❌ Could not notify receptionist: {e}")
+
         # Send real-time notification to frontend about new user
         socketio.emit('new_user_joined', {
             'user_id': user.id,
@@ -1212,7 +1257,7 @@ async def approve_and_dm(client: Client, join_request: ChatJoinRequest):
 def chat_send(user_id):
     message = request.form.get('message')
     files = request.files.getlist('files')
-    
+
     if not message and not files:
         return {'status': 'error', 'msg': 'Missing message or files'}, 400
     
@@ -1228,7 +1273,7 @@ def chat_send(user_id):
             response = requests.post(url, data=data, timeout=10)  # Added timeout
             if response.status_code != 200:
                 return {'status': 'error', 'msg': f'Telegram API error: {response.text}'}, 500
-        
+
         # Handle files
         if files and len(files) > 0:
             temp_paths = []
@@ -1254,7 +1299,7 @@ def chat_send(user_id):
                 temp_path = f'temp_{filename}_{user_id}'
                 file.save(temp_path)
                 temp_paths.append(temp_path)
-            
+                
             try:
                 for temp_path in temp_paths:
                     filename = os.path.basename(temp_path).split('_')[1]  # Get original filename
@@ -1322,7 +1367,7 @@ def chat_send(user_id):
                             else:
                                 file_id = result.get('document', {}).get('file_id')
                         
-                        # Save message with proper URL if we got file_id, otherwise use placeholder
+                        # Save with proper URL if we got file_id, otherwise use placeholder
                         if file_id:
                             # Get file path from Telegram
                             file_info_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}"
@@ -1363,7 +1408,7 @@ def chat_send(user_id):
                         
                         # Real-time notify admin dashboard
                         socketio.emit('admin_message_sent', {'user_id': user_id})
-                    
+            
             except Exception as e:
                 return {'status': 'error', 'msg': f'File send error: {str(e)}'}, 500
             finally:
@@ -1372,7 +1417,7 @@ def chat_send(user_id):
                         os.remove(temp_path)
                     except Exception as e:
                         print('Error removing temp file:', temp_path, e)
-        
+
         socketio.emit('new_message', {'user_id': user_id}, room='chat_' + str(user_id))
         socketio.emit('admin_message_sent', {'user_id': user_id}, room='chat_' + str(user_id))
         
@@ -1886,6 +1931,8 @@ def bot_status():
             "pyrogram_bot": pyrogram_status,
             "chat_id": CHAT_ID,
             "channel_url": CHANNEL_URL,
+            "receptionist_id": RECEPTIONIST_ID,
+            "admin_user_id": ADMIN_USER_ID,
             "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
     except Exception as e:
@@ -1894,6 +1941,70 @@ def bot_status():
             "timestamp": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
 
+@app.route('/receptionist-id', methods=['POST'])
+def set_receptionist_id():
+    """Manually set the RECEPTIONIST_ID"""
+    global RECEPTIONIST_ID
+    try:
+        data = request.get_json()
+        new_id = data.get('receptionist_id')
+        
+        if new_id is None:
+            return jsonify({'error': 'receptionist_id is required'}), 400
+        
+        # Validate that it's a number
+        try:
+            new_id = int(new_id)
+        except ValueError:
+            return jsonify({'error': 'receptionist_id must be a valid number'}), 400
+        
+        RECEPTIONIST_ID = new_id
+        print(f"✅ RECEPTIONIST_ID manually set to: {RECEPTIONIST_ID}")
+        
+        return jsonify({
+            'status': 'success',
+            'receptionist_id': RECEPTIONIST_ID,
+            'message': f'RECEPTIONIST_ID set to {RECEPTIONIST_ID}'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/receptionist-id/reset', methods=['POST'])
+def reset_receptionist_id_endpoint():
+    """Reset RECEPTIONIST_ID back to automatic mode"""
+    try:
+        # Run the async function in a new event loop
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(reset_receptionist_id())
+        loop.close()
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'receptionist_id': RECEPTIONIST_ID,
+                'message': f'RECEPTIONIST_ID reset to automatic: {RECEPTIONIST_ID}'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to reset RECEPTIONIST_ID automatically'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/receptionist-id')
+def get_receptionist_id():
+    """Get the current RECEPTIONIST_ID"""
+    return jsonify({
+        'receptionist_id': RECEPTIONIST_ID,
+        'admin_user_id': ADMIN_USER_ID,
+        'is_auto_set': RECEPTIONIST_ID is not None
+    })
+
 @app.route('/health')
 def health_check():
     """Simple health check endpoint"""
@@ -1901,7 +2012,7 @@ def health_check():
         'status': 'healthy',
         'timestamp': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'bot_token': BOT_TOKEN[:10] + '...' if BOT_TOKEN else 'Not configured'
-    })
+        })
 
 @app.route('/')
 def index():
@@ -1997,17 +2108,75 @@ def media_proxy_options():
     }
     return '', 204, headers
 
+# Global variable for RECEPTIONIST_ID that will be set automatically
+RECEPTIONIST_ID = None
+
+# Function to get bot info and set RECEPTIONIST_ID
+async def get_bot_info():
+    """Get bot information and set RECEPTIONIST_ID automatically"""
+    global RECEPTIONIST_ID
+    try:
+        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
+        if response.status_code == 200:
+            bot_data = response.json()
+            if bot_data.get('ok'):
+                bot_info = bot_data['result']
+                RECEPTIONIST_ID = bot_info['id']  # Set to bot's own user ID
+                print(f"🤖 Bot info: @{bot_info.get('username', 'Unknown')} (ID: {RECEPTIONIST_ID})")
+                print(f"✅ RECEPTIONIST_ID automatically set to: {RECEPTIONIST_ID}")
+                return bot_info
+        else:
+            print(f"❌ Failed to get bot info: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Error getting bot info: {e}")
+    return None
+
+async def reset_receptionist_id():
+    """Reset RECEPTIONIST_ID to automatic mode"""
+    global RECEPTIONIST_ID
+    try:
+        bot_info = await get_bot_info()
+        if bot_info:
+            print(f"✅ RECEPTIONIST_ID reset to automatic: {RECEPTIONIST_ID}")
+            return True
+        else:
+            print("❌ Failed to reset RECEPTIONIST_ID automatically")
+            return False
+    except Exception as e:
+        print(f"❌ Error resetting RECEPTIONIST_ID: {e}")
+        return False
+
 if __name__ == '__main__':
     import multiprocessing
     import time
     import os
     import requests
+    import asyncio
     
     print("🚀 Starting AutoJOIN Bot Application...")
     print(f"🔧 CHAT_ID: {CHAT_ID}")
     print(f"🔧 BOT_TOKEN: {BOT_TOKEN[:10]}...")
     print(f"🔧 API_ID: {config.API_ID}")
     print(f"🔧 API_HASH: {config.API_HASH[:10]}...")
+    
+    # Initialize RECEPTIONIST_ID automatically
+    print("🤖 Getting bot information to set RECEPTIONIST_ID...")
+    try:
+        # Run the async function in a new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        bot_info = loop.run_until_complete(get_bot_info())
+        loop.close()
+        
+        if RECEPTIONIST_ID:
+            print(f"✅ RECEPTIONIST_ID set to: {RECEPTIONIST_ID}")
+        else:
+            print("❌ Failed to set RECEPTIONIST_ID, using ADMIN_USER_ID as fallback")
+            RECEPTIONIST_ID = ADMIN_USER_ID
+    except Exception as e:
+        print(f"❌ Error setting RECEPTIONIST_ID: {e}")
+        print("⚠️ Using ADMIN_USER_ID as fallback")
+        RECEPTIONIST_ID = ADMIN_USER_ID
     
     # Check if bot is already running
     try:
