@@ -76,8 +76,10 @@ CORS(app, origins=[
     "http://10.0.0.2:3000",     # Common local network
     "https://admin-o7ei.onrender.com",
     "https://admin-o7ei.onrender.com/",
-    "https://admin-aa3r.onrender.com",  # Current Render frontend
-    "https://admin-aa3r.onrender.com/", # Current Render frontend
+    "https://admin-aa3r.onrender.com",  # Previous Render frontend
+    "https://admin-aa3r.onrender.com/", # Previous Render frontend
+    "https://admin-8f9s.onrender.com",  # Current Render frontend
+    "https://admin-8f9s.onrender.com/", # Current Render frontend
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com",
@@ -97,8 +99,10 @@ socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
     "http://10.0.0.2:3000",     # Common local network
     "https://admin-o7ei.onrender.com",
     "https://admin-o7ei.onrender.com/",
-    "https://admin-aa3r.onrender.com",  # Current Render frontend
-    "https://admin-aa3r.onrender.com/", # Current Render frontend
+    "https://admin-aa3r.onrender.com",  # Previous Render frontend
+    "https://admin-aa3r.onrender.com/", # Previous Render frontend
+    "https://admin-8f9s.onrender.com",  # Current Render frontend
+    "https://admin-8f9s.onrender.com/", # Current Render frontend
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com",
     "https://apiserverjoin.onrender.com",
