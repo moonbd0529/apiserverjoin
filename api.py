@@ -86,8 +86,8 @@ CORS(app, origins=[
     "*"  # Allow all origins as fallback
 ], supports_credentials=True)
 
-# Use eventlet for better compatibility
-socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
+# Use threading for better compatibility with Gunicorn
+socketio = SocketIO(app, async_mode='threading', cors_allowed_origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://192.168.1.3:3000",  # Local network IP
