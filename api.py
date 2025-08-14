@@ -27,6 +27,7 @@ from telegram.ext import filters as tg_filters
 from telegram import InputMediaPhoto, InputMediaVideo, InputMediaAudio
 from telegram.request import HTTPXRequest as Request
 import json
+import uuid
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, filename='app.log', format='%(asctime)s %(levelname)s: %(message)s')
@@ -181,19 +182,37 @@ def is_gif_file(file_path, mimetype=None, original_filename=None):
 
 def generate_unique_channel_link(user_id, user_name=None):
     """Generate a unique channel link for each user with tracking parameters"""
+    global LINK_CACHE
+    
+    # Check cache first
+    cache_key = f"channel_{user_id}"
+    if cache_key in LINK_CACHE:
+        return LINK_CACHE[cache_key]
+    
     base_url = CHANNEL_URL.rstrip('/')
     
-    # Create unique parameters for each user
-    timestamp = int(datetime.datetime.now().timestamp())
-    user_hash = hash(f"{user_id}_{timestamp}") % 1000000  # Create a hash for uniqueness
+    # Create more unique parameters for each user
+    import random
+    import hashlib
     
-    # Generate unique tracking parameters
+    # Generate multiple unique identifiers
+    timestamp = int(datetime.datetime.now().timestamp())
+    random_seed = random.randint(100000, 999999)
+    user_hash = hash(f"{user_id}_{timestamp}_{random_seed}") % 1000000
+    
+    # Create a unique session ID
+    session_id = hashlib.md5(f"{user_id}_{timestamp}_{random_seed}".encode()).hexdigest()[:8]
+    
+    # Generate unique tracking parameters with more variety
     tracking_params = {
-        'ref': user_id,  # Referrer ID (who shared the link)
-        'uid': user_hash,  # Unique user hash
-        't': timestamp,  # Timestamp
-        'src': 'bot',  # Source
-        'track': f"u{user_id}"  # User tracking ID
+        'ref': user_id,                    # Referrer ID (who shared the link)
+        'uid': user_hash,                  # Unique user hash
+        't': timestamp,                    # Timestamp
+        'src': 'bot',                      # Source
+        'track': f"u{user_id}",           # User tracking ID
+        'sid': session_id,                 # Unique session ID
+        'rnd': random_seed,                # Random seed for uniqueness
+        'hash': abs(hash(f"{user_id}_{user_name}_{timestamp}")) % 100000  # Additional hash
     }
     
     # Build the URL with parameters
@@ -204,6 +223,9 @@ def generate_unique_channel_link(user_id, user_name=None):
     unique_link = f"{base_url}?{'&'.join(param_strings)}"
     
     print(f"🔗 Generated unique tracking link for user {user_id}: {unique_link}")
+    
+    # Cache the result
+    LINK_CACHE[cache_key] = unique_link
     return unique_link
 
 def is_gif_by_header(file_path):
@@ -461,8 +483,8 @@ def chat_messages(user_id):
 @app.route('/get_channel_invite_link', methods=['GET'])
 def get_channel_invite_link():
     try:
-        # Generate a personal bot link for the admin
-        personal_link = generate_personal_bot_link(ADMIN_USER_ID, "Admin")
+        # Generate a personal tracking link for the admin
+        personal_link = generate_personal_tracking_link(ADMIN_USER_ID, "Admin")
         return jsonify({'invite_link': personal_link})
     except Exception as e:
         print(f"Error getting invite link: {e}")
@@ -810,32 +832,78 @@ def generate_personal_bot_link(user_id, user_name=None):
         print(f"🔗 Generated fallback personal bot link for user {user_id}: {personal_link}")
         return personal_link
 
-def generate_personal_tracking_link(user_id, user_name=None):
-    """Generate a personal tracking link that goes directly to the bot with referral tracking"""
-    bot_username = None
-    
+# Global variable for RECEPTIONIST_ID that will be set automatically
+RECEPTIONIST_ID = None
+
+# Cache for bot username to avoid repeated API calls
+BOT_USERNAME_CACHE = None
+
+# Simple cache for generated links to prevent duplicates
+LINK_CACHE = {}
+
+# Function to get bot info and set RECEPTIONIST_ID
+async def get_bot_info():
+    """Get bot information and set RECEPTIONIST_ID automatically"""
+    global RECEPTIONIST_ID, BOT_USERNAME_CACHE
     try:
-        # Get bot info to get username
         response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
         if response.status_code == 200:
             bot_data = response.json()
             if bot_data.get('ok'):
-                bot_username = bot_data['result'].get('username')
+                bot_info = bot_data['result']
+                RECEPTIONIST_ID = bot_info['id']  # Set to bot's own user ID
+                BOT_USERNAME_CACHE = bot_info.get('username')  # Cache the username
+                print(f"🤖 Bot info: @{BOT_USERNAME_CACHE} (ID: {RECEPTIONIST_ID})")
+                print(f"✅ RECEPTIONIST_ID automatically set to: {RECEPTIONIST_ID}")
+                return bot_info
+        else:
+            print(f"❌ Failed to get bot info: {response.status_code}")
     except Exception as e:
-        print(f"❌ Could not get bot username: {e}")
+        print(f"❌ Error getting bot info: {e}")
+    return None
+
+def generate_personal_tracking_link(user_id, user_name=None):
+    """Generate a personal tracking link that goes directly to the bot with referral tracking"""
+    global BOT_USERNAME_CACHE, LINK_CACHE
     
-    if bot_username:
-        # Create personal bot chat link with tracking parameter
-        tracking_param = f"ref_{user_id}"
+    # Check cache first
+    cache_key = f"personal_{user_id}"
+    if cache_key in LINK_CACHE:
+        return LINK_CACHE[cache_key]
+    
+    # Use cached bot username if available
+    if BOT_USERNAME_CACHE:
+        bot_username = BOT_USERNAME_CACHE
+    else:
+        # Fallback: try to get bot username from config or token
+        try:
+            # Try to extract username from bot token (this won't work, but it's a fallback)
+            bot_username = BOT_TOKEN.split(':')[0]
+        except:
+            bot_username = None
+    
+    # Generate unique parameters for personal tracking
+    import random
+    import hashlib
+    
+    timestamp = int(datetime.datetime.now().timestamp())
+    random_seed = random.randint(100000, 999999)
+    session_id = hashlib.md5(f"{user_id}_{timestamp}_{random_seed}".encode()).hexdigest()[:6]
+    
+    if bot_username and bot_username != BOT_TOKEN.split(':')[0]:
+        # Create personal bot chat link with enhanced tracking parameters
+        tracking_param = f"ref_{user_id}_{session_id}_{random_seed}"
         personal_link = f"https://t.me/{bot_username}?start={tracking_param}"
         print(f"🔗 Generated personal tracking link for user {user_id}: {personal_link}")
-        return personal_link
     else:
-        # Fallback: create a deep link to the bot
-        tracking_param = f"ref_{user_id}"
+        # Fallback: create a deep link to the bot with enhanced parameters
+        tracking_param = f"ref_{user_id}_{session_id}_{random_seed}"
         personal_link = f"https://t.me/{BOT_TOKEN.split(':')[0]}?start={tracking_param}"
         print(f"🔗 Generated fallback personal tracking link for user {user_id}: {personal_link}")
-        return personal_link
+    
+    # Cache the result
+    LINK_CACHE[cache_key] = personal_link
+    return personal_link
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -849,71 +917,101 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if this is a personal chat start
         if context.args and context.args[0].startswith('ref_'):
             # This is someone coming through a personal tracking link
-            referrer_id = context.args[0].replace('ref_', '')
             try:
-                referrer_id = int(referrer_id)
-                print(f"🎯 User {user.id} came through personal tracking link from user {referrer_id}")
-                
-                # Send welcome message for personal chat
-                welcome_text = (
-                    f"👋 Welcome to MEXQuick Community!\n\n"
-                    "You're now connected to our personal support chat.\n\n"
-                    "💡 <b>How we can help you:</b>\n"
-                    "• Get personalized support\n"
-                    "• Learn about earning opportunities\n"
-                    "• Join our community\n"
-                    "• Get your personal tracking link\n\n"
-                    "🚀 <b>Start by telling us:</b>\n"
-                    "• What brings you here?\n"
-                    "• Are you interested in earning?\n"
-                    "• Do you have any questions?\n\n"
-                    "I'm here to help you succeed! 💰"
-                )
-                
-                await update.message.reply_text(welcome_text, parse_mode='HTML')
-                
-                # Track the referral
-                track_referral_usage(referrer_id, user.id)
-                
-                # Notify the referrer (you) that someone joined
-                try:
-                    # Ensure RECEPTIONIST_ID is set
-                    if RECEPTIONIST_ID is None:
-                        print("⚠️ RECEPTIONIST_ID not set, using ADMIN_USER_ID")
-                        RECEPTIONIST_ID = ADMIN_USER_ID
+                # Parse the referral ID from the enhanced format: ref_USERID_SESSIONID_RANDOMSEED
+                ref_parts = context.args[0].split('_')
+                if len(ref_parts) >= 2:
+                    referrer_id = int(ref_parts[1])  # Get the user ID part
+                    print(f"🎯 User {user.id} came through personal tracking link from user {referrer_id}")
                     
-                    notification_text = (
-                        f"🎉 New customer joined through your personal tracking link!\n\n"
-                        f"👤 <b>Customer:</b> {user.first_name} {user.last_name or ''}\n"
-                        f"🆔 <b>User ID:</b> {user.id}\n"
-                        f"👤 <b>Username:</b> @{user.username or 'No username'}\n\n"
-                        f"💬 <b>Start chatting with them!</b>\n"
-                        f"They're waiting for your response."
+                    # Send welcome message for personal chat
+                    welcome_text = (
+                        f"👋 Welcome to MEXQuick Community!\n\n"
+                        "You're now connected to our personal support chat.\n\n"
+                        "💡 <b>How we can help you:</b>\n"
+                        "• Get personalized support\n"
+                        "• Learn about earning opportunities\n"
+                        "• Join our community\n"
+                        "• Get your personal tracking link\n\n"
+                        "🚀 <b>Start by telling us:</b>\n"
+                        "• What brings you here?\n"
+                        "• Are you interested in earning?\n"
+                        "• Do you have any questions?\n\n"
+                        "I'm here to help you succeed! 💰"
                     )
                     
-                    await context.bot.send_message(
-                        chat_id=RECEPTIONIST_ID,
-                        text=notification_text,
-                        parse_mode='HTML'
-                    )
-                    print(f"✅ Notified receptionist {RECEPTIONIST_ID} about new customer {user.id}")
+                    await update.message.reply_text(welcome_text, parse_mode='HTML')
                     
-                except Exception as e:
-                    print(f"❌ Could not notify receptionist: {e}")
-                
-                # Save user for tracking
-                full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-                username = user.username or ''
-                join_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                personal_link = generate_personal_tracking_link(referrer_id, full_name)
-                
-                add_user(user.id, full_name, username, join_date, personal_link, referred_by=referrer_id)
-                print(f"💾 Personal chat user {user.id} saved to database")
-                
-                return
-                
-            except ValueError:
-                print(f"⚠️ Invalid referrer ID in personal chat start: {context.args[0]}")
+                    # Track the referral
+                    track_referral_usage(referrer_id, user.id)
+                    
+                    # Save user for tracking with referral information
+                    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+                    username = user.username or ''
+                    join_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    # Generate a unique tracking link for this user
+                    personal_link = generate_personal_tracking_link(user.id, full_name)
+                    
+                    # Save user with referral tracking
+                    add_user(user.id, full_name, username, join_date, personal_link, referred_by=referrer_id)
+                    print(f"💾 Personal chat user {user.id} saved to database with referral from {referrer_id}")
+                    
+                    # Notify the referrer (admin) that someone joined
+                    try:
+                        # Ensure RECEPTIONIST_ID is set
+                        if RECEPTIONIST_ID is None:
+                            print("⚠️ RECEPTIONIST_ID not set, using ADMIN_USER_ID")
+                            RECEPTIONIST_ID = ADMIN_USER_ID
+                        
+                        notification_text = (
+                            f"🎉 New customer joined through your personal tracking link!\n\n"
+                            f"👤 <b>Customer:</b> {user.first_name} {user.last_name or ''}\n"
+                            f"🆔 <b>User ID:</b> {user.id}\n"
+                            f"👤 <b>Username:</b> @{user.username or 'No username'}\n"
+                            f"🔗 <b>Tracking Link:</b> {personal_link}\n\n"
+                            f"💬 <b>Start chatting with them!</b>\n"
+                            f"They're waiting for your response.\n\n"
+                            f"📊 <b>You can now:</b>\n"
+                            f"• Chat directly with this customer\n"
+                            f"• Track their progress\n"
+                            f"• Send them personalized messages\n"
+                            f"• Monitor their activity in admin panel"
+                        )
+                        
+                        await context.bot.send_message(
+                            chat_id=RECEPTIONIST_ID,
+                            text=notification_text,
+                            parse_mode='HTML'
+                        )
+                        print(f"✅ Notified receptionist {RECEPTIONIST_ID} about new customer {user.id}")
+                        
+                        # Send real-time notification to admin dashboard
+                        socketio.emit('new_user_joined', {
+                            'user_id': user.id,
+                            'full_name': full_name,
+                            'username': username,
+                            'join_date': join_date,
+                            'invite_link': personal_link,
+                            'photo_url': None,
+                            'referred_by': referrer_id,
+                            'is_online': True,
+                            'source': 'personal_tracking_link'
+                        })
+                        print(f"📡 Sent real-time notification to admin dashboard for user {user.id}")
+                        
+                    except Exception as e:
+                        print(f"❌ Could not notify receptionist: {e}")
+                    
+                    return
+                    
+                else:
+                    print(f"⚠️ Invalid referral format: {context.args[0]}")
+                    
+            except ValueError as e:
+                print(f"⚠️ Invalid referrer ID in personal chat start: {context.args[0]} - Error: {e}")
+            except Exception as e:
+                print(f"❌ Error processing referral: {e}")
         
         # Regular /start command (existing logic)
         # Check if user is new or old
@@ -2217,29 +2315,6 @@ def media_proxy_options():
     }
     return '', 204, headers
 
-# Global variable for RECEPTIONIST_ID that will be set automatically
-RECEPTIONIST_ID = None
-
-# Function to get bot info and set RECEPTIONIST_ID
-async def get_bot_info():
-    """Get bot information and set RECEPTIONIST_ID automatically"""
-    global RECEPTIONIST_ID
-    try:
-        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
-        if response.status_code == 200:
-            bot_data = response.json()
-            if bot_data.get('ok'):
-                bot_info = bot_data['result']
-                RECEPTIONIST_ID = bot_info['id']  # Set to bot's own user ID
-                print(f"🤖 Bot info: @{bot_info.get('username', 'Unknown')} (ID: {RECEPTIONIST_ID})")
-                print(f"✅ RECEPTIONIST_ID automatically set to: {RECEPTIONIST_ID}")
-                return bot_info
-        else:
-            print(f"❌ Failed to get bot info: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Error getting bot info: {e}")
-    return None
-
 async def reset_receptionist_id():
     """Reset RECEPTIONIST_ID to automatic mode"""
     global RECEPTIONIST_ID
@@ -2418,7 +2493,7 @@ async def mylink(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• When they click it, they'll come directly to you\n"
             "• You'll get notified and can chat with them\n"
             "• Track your referral success!\n\n"
-            "🚀 <b>Start sharing to grow your network!</b>"
+            "🚀 <b>Start sharing to grow your network!"
         )
         
         await update.message.reply_text(message_text, parse_mode='HTML')
@@ -2820,8 +2895,20 @@ def admin_get_users_with_links():
         for user in users:
             user_id, full_name, username, join_date, invite_link, referral_count, referred_by, label = user
             
-            # Generate fresh links for each user
-            personal_link = generate_personal_tracking_link(user_id, full_name or 'Unknown')
+            # Only generate links if they don't exist or if explicitly requested
+            # This prevents unnecessary repeated generation
+            if not invite_link or 'ref_' not in str(invite_link):
+                # Generate personal tracking link only if needed
+                personal_link = generate_personal_tracking_link(user_id, full_name or 'Unknown')
+                # Update database with new link
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute('UPDATE users SET invite_link = ? WHERE user_id = ?', (personal_link, user_id))
+                conn.commit()
+                conn.close()
+                invite_link = personal_link
+            
+            # Generate channel link (this is always unique per user)
             channel_link = generate_unique_channel_link(user_id, full_name or 'Unknown')
             
             users_with_links.append({
@@ -2830,7 +2917,7 @@ def admin_get_users_with_links():
                 'username': username or '',
                 'join_date': join_date,
                 'current_link': invite_link,
-                'personal_tracking_link': personal_link,
+                'personal_tracking_link': invite_link if 'ref_' in str(invite_link) else generate_personal_tracking_link(user_id, full_name or 'Unknown'),
                 'channel_link': channel_link,
                 'referral_count': referral_count or 0,
                 'referred_by': referred_by,
@@ -2849,6 +2936,251 @@ def admin_get_users_with_links():
         
     except Exception as e:
         print(f"Error getting users with links: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def generate_custom_customer_link(user_id, user_name=None, customer_name=None):
+    """Generate a completely unique custom customer invite link for sharing"""
+    global LINK_CACHE
+    
+    # Check cache first
+    cache_key = f"custom_customer_{user_id}_{customer_name or 'default'}"
+    if cache_key in LINK_CACHE:
+        return LINK_CACHE[cache_key]
+    
+    base_url = CHANNEL_URL.rstrip('/')
+    
+    # Generate highly unique parameters
+    import random
+    import hashlib
+    import uuid
+    
+    timestamp = int(datetime.datetime.now().timestamp())
+    random_seed = random.randint(100000, 999999)
+    unique_id = str(uuid.uuid4())[:8]  # Generate UUID for maximum uniqueness
+    
+    # Create multiple unique identifiers
+    user_hash = hash(f"{user_id}_{timestamp}_{random_seed}_{unique_id}") % 1000000
+    session_id = hashlib.md5(f"{user_id}_{customer_name}_{timestamp}_{random_seed}".encode()).hexdigest()[:8]
+    customer_hash = abs(hash(f"{customer_name or 'unknown'}_{timestamp}")) % 100000
+    
+    # Generate unique tracking parameters
+    tracking_params = {
+        'ref': user_id,                    # Referrer ID (admin/user who created the link)
+        'uid': user_hash,                  # Unique user hash
+        't': timestamp,                    # Timestamp
+        'src': 'admin',                    # Source (admin generated)
+        'track': f"u{user_id}",           # User tracking ID
+        'sid': session_id,                 # Unique session ID
+        'rnd': random_seed,                # Random seed for uniqueness
+        'hash': customer_hash,             # Customer-specific hash
+        'uid2': unique_id,                 # UUID for maximum uniqueness
+        'type': 'customer',                # Link type identifier
+        'admin': user_id                   # Admin who created this link
+    }
+    
+    # Build the URL with parameters
+    param_strings = []
+    for key, value in tracking_params.items():
+        param_strings.append(f"{key}={value}")
+    
+    custom_link = f"{base_url}?{'&'.join(param_strings)}"
+    
+    print(f"🔗 Generated custom customer link for user {user_id}: {custom_link}")
+    
+    # Cache the result
+    LINK_CACHE[cache_key] = custom_link
+    return custom_link
+
+@app.route('/admin/generate-custom-customer-link/<int:user_id>', methods=['POST'])
+def admin_generate_custom_customer_link(user_id):
+    """Admin endpoint to generate a custom customer invite link for sharing"""
+    try:
+        data = request.get_json()
+        customer_name = data.get('customer_name', 'Customer')
+        
+        # Check if user exists in database
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (user_id,))
+        result = c.fetchone()
+        conn.close()
+        
+        if not result:
+            return jsonify({'error': 'User not found'}), 404
+        
+        full_name, username = result
+        
+        # Generate custom customer link
+        custom_link = generate_custom_customer_link(user_id, full_name, customer_name)
+        
+        return jsonify({
+            'status': 'success',
+            'user_id': user_id,
+            'admin_name': full_name,
+            'customer_name': customer_name,
+            'custom_customer_link': custom_link,
+            'message': f'Custom customer link generated for {customer_name} by {full_name}',
+            'generated_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    except Exception as e:
+        print(f"Error generating custom customer link: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/generate-bulk-customer-links/<int:user_id>', methods=['POST'])
+def admin_generate_bulk_customer_links(user_id):
+    """Admin endpoint to generate multiple custom customer links at once"""
+    try:
+        data = request.get_json()
+        customer_names = data.get('customer_names', [])
+        quantity = data.get('quantity', 5)  # Default to 5 links
+        
+        if not customer_names and quantity > 0:
+            # Generate generic customer links if no names provided
+            customer_names = [f"Customer_{i+1}" for i in range(quantity)]
+        
+        # Check if user exists in database
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (user_id,))
+        result = c.fetchone()
+        conn.close()
+        
+        if not result:
+            return jsonify({'error': 'User not found'}), 404
+        
+        full_name, username = result
+        
+        # Generate multiple custom customer links
+        generated_links = []
+        for customer_name in customer_names:
+            custom_link = generate_custom_customer_link(user_id, full_name, customer_name)
+            generated_links.append({
+                'customer_name': customer_name,
+                'link': custom_link
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'user_id': user_id,
+            'admin_name': full_name,
+            'total_links': len(generated_links),
+            'generated_links': generated_links,
+            'message': f'Generated {len(generated_links)} custom customer links for {full_name}',
+            'generated_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    except Exception as e:
+        print(f"Error generating bulk customer links: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/tracking-users/<int:user_id>', methods=['GET'])
+def admin_get_tracking_users(user_id):
+    """Admin endpoint to get users who came through this user's tracking links"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        
+        # Get users referred by this user
+        c.execute('''
+            SELECT user_id, full_name, username, join_date, invite_link, photo_url, label
+            FROM users 
+            WHERE referred_by = ? 
+            ORDER BY join_date DESC
+        ''', (user_id,))
+        referred_users = c.fetchall()
+        
+        # Get referrer info
+        c.execute('SELECT full_name, username, referral_count FROM users WHERE user_id = ?', (user_id,))
+        referrer_info = c.fetchone()
+        
+        conn.close()
+        
+        if not referrer_info:
+            return jsonify({'error': 'User not found'}), 404
+        
+        referrer_name, referrer_username, referral_count = referrer_info
+        
+        return jsonify({
+            'referrer': {
+                'user_id': user_id,
+                'full_name': referrer_name or 'Unknown',
+                'username': referrer_username or '',
+                'referral_count': referral_count or 0
+            },
+            'referred_users': [
+                {
+                    'user_id': row[0],
+                    'full_name': row[1] or 'Unknown',
+                    'username': row[2] or '',
+                    'join_date': row[3],
+                    'invite_link': row[4],
+                    'photo_url': row[5],
+                    'label': row[6],
+                    'is_online': get_user_online_status(row[0], 5)
+                } for row in referred_users
+            ],
+            'total_referred': len(referred_users),
+            'tracking_stats': {
+                'total_referrals': len(referred_users),
+                'active_users': len([u for u in referred_users if get_user_online_status(u[0], 5)]),
+                'recent_joins': len([u for u in referred_users if u[3] and '2025' in u[3]])
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error getting tracking users: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/recent-tracking-activity', methods=['GET'])
+def admin_get_recent_tracking_activity():
+    """Admin endpoint to get recent tracking activity across all users"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        
+        # Get recent users who came through tracking links
+        c.execute('''
+            SELECT u1.user_id, u1.full_name, u1.username, u1.join_date, 
+                   u1.referred_by, u2.full_name as referrer_name
+            FROM users u1 
+            LEFT JOIN users u2 ON u1.referred_by = u2.user_id
+            WHERE u1.referred_by IS NOT NULL 
+            ORDER BY u1.join_date DESC 
+            LIMIT 50
+        ''')
+        recent_activity = c.fetchall()
+        
+        # Get tracking statistics
+        c.execute('SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL')
+        total_tracked = c.fetchone()[0]
+        
+        c.execute('SELECT COUNT(DISTINCT referred_by) FROM users WHERE referred_by IS NOT NULL')
+        total_referrers = c.fetchone()[0]
+        
+        conn.close()
+        
+        return jsonify({
+            'recent_activity': [
+                {
+                    'user_id': row[0],
+                    'full_name': row[1] or 'Unknown',
+                    'username': row[2] or '',
+                    'join_date': row[3],
+                    'referred_by': row[4],
+                    'referrer_name': row[5] or 'Unknown',
+                    'is_online': get_user_online_status(row[0], 5)
+                } for row in recent_activity
+            ],
+            'tracking_stats': {
+                'total_tracked_users': total_tracked,
+                'total_referrers': total_referrers,
+                'recent_activity_count': len(recent_activity)
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error getting recent tracking activity: {e}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
