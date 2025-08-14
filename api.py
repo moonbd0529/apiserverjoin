@@ -21,12 +21,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler
 from telegram.ext import ChatJoinRequestHandler
 
-from pyrogram import Client, filters
-from pyrogram.types import ChatJoinRequest
 import config  # config.py should have BOT_TOKEN, API_ID, API_HASH, CHAT_ID, WELCOME_MESSAGE
 
 from telegram.ext import filters as tg_filters
-from pyrogram import filters as pyro_filters
 from telegram import InputMediaPhoto, InputMediaVideo, InputMediaAudio
 from telegram.request import HTTPXRequest as Request
 import json
@@ -192,10 +189,11 @@ def generate_unique_channel_link(user_id, user_name=None):
     
     # Generate unique tracking parameters
     tracking_params = {
-        'ref': user_id,  # Referrer ID
+        'ref': user_id,  # Referrer ID (who shared the link)
         'uid': user_hash,  # Unique user hash
         't': timestamp,  # Timestamp
-        'src': 'bot'  # Source
+        'src': 'bot',  # Source
+        'track': f"u{user_id}"  # User tracking ID
     }
     
     # Build the URL with parameters
@@ -205,7 +203,7 @@ def generate_unique_channel_link(user_id, user_name=None):
     
     unique_link = f"{base_url}?{'&'.join(param_strings)}"
     
-    print(f"🔗 Generated unique link for user {user_id}: {unique_link}")
+    print(f"🔗 Generated unique tracking link for user {user_id}: {unique_link}")
     return unique_link
 
 def is_gif_by_header(file_path):
@@ -501,6 +499,36 @@ def get_user_unique_link(user_id):
         print(f"Error getting user link: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/get_user_tracking_link/<int:user_id>', methods=['GET'])
+def get_user_tracking_link(user_id):
+    """Get personal tracking link for a specific user"""
+    try:
+        # Check if user exists in database
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (user_id,))
+        result = c.fetchone()
+        conn.close()
+        
+        if result:
+            full_name, username = result
+            # Generate personal tracking link
+            tracking_link = generate_personal_tracking_link(user_id, full_name)
+            
+            return jsonify({
+                'user_id': user_id,
+                'full_name': full_name,
+                'username': username,
+                'tracking_link': tracking_link,
+                'message': f'Personal tracking link for {full_name}'
+            })
+        else:
+            return jsonify({'error': 'User not found'}), 404
+            
+    except Exception as e:
+        print(f"Error getting user tracking link: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # --- Telegram Bot Handlers ---
 async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -782,6 +810,33 @@ def generate_personal_bot_link(user_id, user_name=None):
         print(f"🔗 Generated fallback personal bot link for user {user_id}: {personal_link}")
         return personal_link
 
+def generate_personal_tracking_link(user_id, user_name=None):
+    """Generate a personal tracking link that goes directly to the bot with referral tracking"""
+    bot_username = None
+    
+    try:
+        # Get bot info to get username
+        response = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=10)
+        if response.status_code == 200:
+            bot_data = response.json()
+            if bot_data.get('ok'):
+                bot_username = bot_data['result'].get('username')
+    except Exception as e:
+        print(f"❌ Could not get bot username: {e}")
+    
+    if bot_username:
+        # Create personal bot chat link with tracking parameter
+        tracking_param = f"ref_{user_id}"
+        personal_link = f"https://t.me/{bot_username}?start={tracking_param}"
+        print(f"🔗 Generated personal tracking link for user {user_id}: {personal_link}")
+        return personal_link
+    else:
+        # Fallback: create a deep link to the bot
+        tracking_param = f"ref_{user_id}"
+        personal_link = f"https://t.me/{BOT_TOKEN.split(':')[0]}?start={tracking_param}"
+        print(f"🔗 Generated fallback personal tracking link for user {user_id}: {personal_link}")
+        return personal_link
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
@@ -792,12 +847,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"🔔 /start command received from {user.first_name} ({user.id})")
         
         # Check if this is a personal chat start
-        if context.args and context.args[0].startswith('chat_'):
-            # This is someone coming through a personal bot link
-            referrer_id = context.args[0].replace('chat_', '')
+        if context.args and context.args[0].startswith('ref_'):
+            # This is someone coming through a personal tracking link
+            referrer_id = context.args[0].replace('ref_', '')
             try:
                 referrer_id = int(referrer_id)
-                print(f"🎯 User {user.id} came through personal bot link from user {referrer_id}")
+                print(f"🎯 User {user.id} came through personal tracking link from user {referrer_id}")
                 
                 # Send welcome message for personal chat
                 welcome_text = (
@@ -817,6 +872,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await update.message.reply_text(welcome_text, parse_mode='HTML')
                 
+                # Track the referral
+                track_referral_usage(referrer_id, user.id)
+                
                 # Notify the referrer (you) that someone joined
                 try:
                     # Ensure RECEPTIONIST_ID is set
@@ -825,7 +883,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         RECEPTIONIST_ID = ADMIN_USER_ID
                     
                     notification_text = (
-                        f"🎉 New customer joined through your personal bot link!\n\n"
+                        f"🎉 New customer joined through your personal tracking link!\n\n"
                         f"👤 <b>Customer:</b> {user.first_name} {user.last_name or ''}\n"
                         f"🆔 <b>User ID:</b> {user.id}\n"
                         f"👤 <b>Username:</b> @{user.username or 'No username'}\n\n"
@@ -847,7 +905,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
                 username = user.username or ''
                 join_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                personal_link = generate_personal_bot_link(referrer_id, full_name)
+                personal_link = generate_personal_tracking_link(referrer_id, full_name)
                 
                 add_user(user.id, full_name, username, join_date, personal_link, referred_by=referrer_id)
                 print(f"💾 Personal chat user {user.id} saved to database")
@@ -869,31 +927,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute('SELECT invite_link FROM users WHERE user_id = ?', (user.id,))
             existing_link = c.fetchone()
             if existing_link and existing_link[0]:
-                # Generate personal bot link instead of channel link
-                personal_link = generate_personal_bot_link(user.id, user.first_name)
+                # Generate personal tracking link instead of channel link
+                personal_link = generate_personal_tracking_link(user.id, user.first_name)
                 welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', personal_link)
-                print(f"📝 Sending personal bot link to user {user.id}")
+                print(f"📝 Sending personal tracking link to user {user.id}")
                 await update.message.reply_text(welcome_text, parse_mode='HTML')
             else:
                 welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', 'No tracking link available')
                 await update.message.reply_text(welcome_text, parse_mode='HTML')
         else:
-            # New user: generate personal bot link and save
+            # New user: generate personal tracking link and save
             full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
             username = user.username or ''
             join_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             print(f"🆕 New user {user.id}: {full_name} (@{username})")
             
-            # Generate personal bot link instead of channel link
-            personal_link = generate_personal_bot_link(user.id, full_name)
-            print(f"🔗 Generated personal bot link: {personal_link}")
+            # Generate personal tracking link instead of channel link
+            personal_link = generate_personal_tracking_link(user.id, full_name)
+            print(f"🔗 Generated personal tracking link: {personal_link}")
             
-            # Save user with personal bot link
+            # Save user with personal tracking link
             add_user(user.id, full_name, username, join_date, personal_link)
             print(f"💾 User {user.id} saved to database")
             
-            # Send welcome message with personal bot link
+            # Send welcome message with personal tracking link
             welcome_text = config.WELCOME_MESSAGE.replace('{TRACKING_LINK}', personal_link)
             
             # Send ONE message without any buttons
@@ -1072,6 +1130,7 @@ async def approve_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Register handlers for Telegram bot
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler('start', start))
+# application.add_handler(CommandHandler('mylink', mylink))  # Temporarily commented out
 application.add_handler(MessageHandler(tg_filters.TEXT & ~tg_filters.COMMAND, user_message_handler))
 application.add_handler(MessageHandler(tg_filters.PHOTO, user_message_handler))
 application.add_handler(MessageHandler(tg_filters.VIDEO, user_message_handler))
@@ -1080,14 +1139,27 @@ application.add_handler(MessageHandler(tg_filters.AUDIO, user_message_handler))
 application.add_handler(MessageHandler(tg_filters.Document.ALL, user_message_handler))
 application.add_handler(ChatJoinRequestHandler(approve_join))
 
-# Pyrogram Bot Setup
-pyro_app = Client(
-    "AutoApproveBot",
-    bot_token=config.BOT_TOKEN,
-    api_id=config.API_ID,
-    api_hash=config.API_HASH,
-    in_memory=True  # Add this to prevent session file issues
-)
+# Pyrogram Bot Setup - Only initialize when needed
+pyro_app = None
+
+def get_pyro_app():
+    """Get or create Pyrogram app instance"""
+    global pyro_app
+    if pyro_app is None:
+        try:
+            from pyrogram import Client
+            pyro_app = Client(
+                "AutoApproveBot",
+                bot_token=config.BOT_TOKEN,
+                api_id=config.API_ID,
+                api_hash=config.API_HASH,
+                in_memory=True  # Add this to prevent session file issues
+            )
+            print("✅ Pyrogram app created")
+        except Exception as e:
+            print(f"❌ Failed to create Pyrogram app: {e}")
+            return None
+    return pyro_app
 
 CHAT_ID = config.CHAT_ID
 WELCOME_TEXT = config.WELCOME_MESSAGE
@@ -1095,163 +1167,184 @@ WELCOME_TEXT = config.WELCOME_MESSAGE
 # Test Pyrogram connection
 async def test_pyrogram_connection():
     try:
-        await pyro_app.start()
-        me = await pyro_app.get_me()
+        app = get_pyro_app()
+        if app is None:
+            return False
+            
+        await app.start()
+        me = await app.get_me()
         print(f"✅ Pyrogram bot connected: @{me.username}")
-        await pyro_app.stop()
+        await app.stop()
         return True
     except Exception as e:
         print(f"❌ Pyrogram connection failed: {e}")
         return False
 
-@pyro_app.on_chat_join_request(pyro_filters.chat(CHAT_ID))
-async def approve_and_dm(client: Client, join_request: ChatJoinRequest):
-    user = join_request.from_user
-    chat = join_request.chat
-
-    print(f"🔔 Join request received from {user.first_name} ({user.id}) for {chat.title}")
-    print(f"🔧 CHAT_ID: {CHAT_ID}, chat.id: {chat.id}")
-    print(f"🔧 User details: {user.first_name} {user.last_name}, @{user.username}")
-
+# Pyrogram join request handler - only register when needed
+def setup_pyrogram_handlers():
+    """Setup Pyrogram handlers only when needed"""
     try:
-        # Approve the join request
-        await client.approve_chat_join_request(chat.id, user.id)
-        print(f"✅ Approved: {user.first_name} ({user.id}) in {chat.title}")
-
-        # Add user to DB
-        from datetime import datetime
-        full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-        username = user.username or ''
-        join_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        from pyrogram import Client, filters
+        from pyrogram.types import ChatJoinRequest
         
-        # Get the invite link that was used for joining
-        invite_link = None
-        referred_by = None
+        app = get_pyro_app()
+        if app is None:
+            print("❌ Cannot setup Pyrogram handlers - app not available")
+            return
         
-        # Check if this user came through a tracking link
-        if join_request.invite_link:
-            invite_link = join_request.invite_link.invite_link
-            print(f"🔗 Invite link used: {invite_link}")
-            # Check if the invite link contains tracking parameter
-            if invite_link and 'ref=' in invite_link:
-                try:
-                    # Extract referrer ID from the link
-                    ref_param = invite_link.split('ref=')[1].split('&')[0]
-                    referred_by = int(ref_param)
-                    print(f"🎯 User {user.id} was referred by user {referred_by}")
-                except (ValueError, IndexError):
-                    print(f"⚠️ Could not parse referral ID from link: {invite_link}")
-        else:
-            # Generate a unique channel link for this user
-            invite_link = generate_unique_channel_link(user.id, full_name)
-            print(f"🔗 Generated unique channel link: {invite_link}")
-        
-        add_user(user.id, full_name, username, join_date, invite_link, referred_by=referred_by)
-        print(f"💾 User {user.first_name} ({user.id}) added to database with invite link: {invite_link}")
+        @app.on_chat_join_request(filters.chat(CHAT_ID))
+        async def approve_and_dm(client: Client, join_request: ChatJoinRequest):
+            user = join_request.from_user
+            chat = join_request.chat
 
-        # Notify receptionist about the approved user
-        try:
-            # Ensure RECEPTIONIST_ID is set
-            if RECEPTIONIST_ID is None:
-                print("⚠️ RECEPTIONIST_ID not set, using ADMIN_USER_ID")
-                RECEPTIONIST_ID = ADMIN_USER_ID
-            
-            notification_text = (
-                f"✅ New member approved in {chat.title}\n\n"
-                f"👤 Name: {full_name}\n"
-                f"🆔 User ID: {user.id}\n"
-                f"🌐 Username: @{username or 'No username'}\n"
-                f"🔗 Invite link: {invite_link or 'N/A'}\n"
-                f"👥 Referred by: {referred_by if referred_by else 'N/A'}"
-            )
-            await client.send_message(chat_id=RECEPTIONIST_ID, text=notification_text)
-            print(f"✅ Notified receptionist {RECEPTIONIST_ID} about approved user {user.id}")
-        except Exception as e:
-            print(f"❌ Could not notify receptionist: {e}")
+            print(f"🔔 Join request received from {user.first_name} ({user.id}) for {chat.title}")
+            print(f"🔧 CHAT_ID: {CHAT_ID}, chat.id: {chat.id}")
+            print(f"🔧 User details: {user.first_name} {user.last_name}, @{user.username}")
 
-        # Send real-time notification to frontend about new user
-        socketio.emit('new_user_joined', {
-            'user_id': user.id,
-            'full_name': full_name,
-            'username': username,
-            'join_date': join_date,
-            'invite_link': invite_link,
-            'photo_url': None,  # Pyrogram doesn't fetch photo by default
-            'referred_by': referred_by,
-            'is_online': True
-        })
-        print(f"📡 Pyrogram bot: Sent real-time notification for new user {user.id}")
-
-        # Send welcome message
-        try:
-            if referred_by:
-                # Custom welcome for referred users
-                welcome_message = config.WELCOME_MESSAGE
-            else:
-                welcome_message = config.WELCOME_MESSAGE
-            
-            print(f"📝 Sending welcome message to {user.first_name} ({user.id})")
-            print(f"📝 Message: {welcome_message}")
-            
-            await client.send_message(
-                user.id,
-                welcome_message
-            )
-            print(f"✅ DM sent successfully to {user.first_name} ({user.id})")
-            
-            # If this was a referral, notify the referrer
-            if referred_by:
-                try:
-                    referrer_message = (
-                        f"🎉 Great news!\n\n"
-                        f"Someone joined through your tracking link!\n"
-                        f"👤 **New Member:** {full_name}\n"
-                        f"🆔 **User ID:** {user.id}\n\n"
-                        f"Keep sharing your link to grow your network! 🚀"
-                    )
-                    await client.send_message(chat_id=referred_by, text=referrer_message)
-                    print(f"✅ Notified referrer {referred_by} about new referral {user.id}")
-                except Exception as e:
-                    print(f"❌ Could not notify referrer {referred_by}: {e}")
-                    
-        except Exception as e:
-            print(f"❌ Failed to send DM to {user.first_name} ({user.id}): {e}")
-            print(f"🔍 Error type: {type(e).__name__}")
-            print(f"🔍 Error details: {str(e)}")
-            
-            # Try to get more specific error information
-            if "Forbidden" in str(e):
-                print(f"⚠️ User {user.first_name} ({user.id}) has blocked the bot or doesn't allow DMs")
-            elif "User not found" in str(e):
-                print(f"⚠️ User {user.first_name} ({user.id}) not found - may have deleted account")
-            elif "Chat not found" in str(e):
-                print(f"⚠️ Chat not found for user {user.first_name} ({user.id})")
-            elif "USER_DEACTIVATED" in str(e):
-                print(f"⚠️ User {user.first_name} ({user.id}) has deactivated their account")
-            elif "USER_IS_BLOCKED" in str(e):
-                print(f"⚠️ User {user.first_name} ({user.id}) has blocked the bot")
-                
-            # Try to send a message in the channel instead
             try:
-                channel_message = config.WELCOME_MESSAGE
-                await client.send_message(chat_id=CHAT_ID, text=channel_message)
-                print(f"✅ Sent welcome message to channel for user {user.id}")
-            except Exception as channel_error:
-                print(f"❌ Could not send channel message: {channel_error}")
+                # Approve the join request
+                await client.approve_chat_join_request(chat.id, user.id)
+                print(f"✅ Approved: {user.first_name} ({user.id}) in {chat.title}")
+
+                # Add user to DB
+                from datetime import datetime
+                full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+                username = user.username or ''
+                join_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 
+                # Get the invite link that was used for joining
+                invite_link = None
+                referred_by = None
+                
+                # Check if this user came through a tracking link
+                if join_request.invite_link:
+                    invite_link = join_request.invite_link.invite_link
+                    print(f"🔗 Invite link used: {invite_link}")
+                    # Check if the invite link contains tracking parameter
+                    if invite_link and 'ref=' in invite_link:
+                        try:
+                            # Extract referrer ID from the link
+                            ref_param = invite_link.split('ref=')[1].split('&')[0]
+                            referred_by = int(ref_param)
+                            print(f"🎯 User {user.id} was referred by user {referred_by}")
+                        except (ValueError, IndexError):
+                            print(f"⚠️ Could not parse referral ID from link: {invite_link}")
+                else:
+                    # Generate a unique channel link for this user
+                    invite_link = generate_unique_channel_link(user.id, full_name)
+                    print(f"🔗 Generated unique channel link: {invite_link}")
+                
+                add_user(user.id, full_name, username, join_date, invite_link, referred_by=referred_by)
+                print(f"💾 User {user.first_name} ({user.id}) added to database with invite link: {invite_link}")
+
+                # Notify receptionist about the approved user
+                try:
+                    # Ensure RECEPTIONIST_ID is set
+                    if RECEPTIONIST_ID is None:
+                        print("⚠️ RECEPTIONIST_ID not set, using ADMIN_USER_ID")
+                        RECEPTIONIST_ID = ADMIN_USER_ID
+                    
+                    notification_text = (
+                        f"✅ New member approved in {chat.title}\n\n"
+                        f"👤 Name: {full_name}\n"
+                        f"🆔 User ID: {user.id}\n"
+                        f"🌐 Username: @{username or 'No username'}\n"
+                        f"🔗 Invite link: {invite_link or 'N/A'}\n"
+                        f"👥 Referred by: {referred_by if referred_by else 'N/A'}"
+                    )
+                    await client.send_message(chat_id=RECEPTIONIST_ID, text=notification_text)
+                    print(f"✅ Notified receptionist {RECEPTIONIST_ID} about approved user {user.id}")
+                except Exception as e:
+                    print(f"❌ Could not notify receptionist: {e}")
+
+                # Send real-time notification to frontend about new user
+                socketio.emit('new_user_joined', {
+                    'user_id': user.id,
+                    'full_name': full_name,
+                    'username': username,
+                    'join_date': join_date,
+                    'invite_link': invite_link,
+                    'photo_url': None,  # Pyrogram doesn't fetch photo by default
+                    'referred_by': referred_by,
+                    'is_online': True
+                })
+                print(f"📡 Pyrogram bot: Sent real-time notification for new user {user.id}")
+
+                # Send welcome message
+                try:
+                    if referred_by:
+                        # Custom welcome for referred users
+                        welcome_message = config.WELCOME_MESSAGE
+                    else:
+                        welcome_message = config.WELCOME_MESSAGE
+                    
+                    print(f"📝 Sending welcome message to {user.first_name} ({user.id})")
+                    print(f"📝 Message: {welcome_message}")
+                    
+                    await client.send_message(
+                        user.id,
+                        welcome_message
+                    )
+                    print(f"✅ DM sent successfully to {user.first_name} ({user.id})")
+                    
+                    # If this was a referral, notify the referrer
+                    if referred_by:
+                        try:
+                            referrer_message = (
+                                f"🎉 Great news!\n\n"
+                                f"Someone joined through your tracking link!\n"
+                                f"👤 **New Member:** {full_name}\n"
+                                f"🆔 **User ID:** {user.id}\n\n"
+                                f"Keep sharing your link to grow your network! 🚀"
+                            )
+                            await client.send_message(chat_id=referred_by, text=referrer_message)
+                            print(f"✅ Notified referrer {referred_by} about new referral {user.id}")
+                        except Exception as e:
+                            print(f"❌ Could not notify referrer {referred_by}: {e}")
+                            
+                except Exception as e:
+                    print(f"❌ Failed to send DM to {user.first_name} ({user.id}): {e}")
+                    print(f"🔍 Error type: {type(e).__name__}")
+                    print(f"🔍 Error details: {str(e)}")
+                    
+                    # Try to get more specific error information
+                    if "Forbidden" in str(e):
+                        print(f"⚠️ User {user.first_name} ({user.id}) has blocked the bot or doesn't allow DMs")
+                    elif "User not found" in str(e):
+                        print(f"⚠️ User {user.first_name} ({user.id}) not found - may have deleted account")
+                    elif "Chat not found" in str(e):
+                        print(f"⚠️ Chat not found for user {user.first_name} ({user.id})")
+                    elif "USER_DEACTIVATED" in str(e):
+                        print(f"⚠️ User {user.first_name} ({user.id}) has deactivated their account")
+                    elif "USER_IS_BLOCKED" in str(e):
+                        print(f"⚠️ User {user.first_name} ({user.id}) has blocked the bot")
+                        
+                    # Try to send a message in the channel instead
+                    try:
+                        channel_message = config.WELCOME_MESSAGE
+                        await client.send_message(chat_id=CHAT_ID, text=channel_message)
+                        print(f"✅ Sent welcome message to channel for user {user.id}")
+                    except Exception as channel_error:
+                        print(f"❌ Could not send channel message: {channel_error}")
+                        
+            except Exception as e:
+                if "User_already_participant" in str(e) or "USER_ALREADY_PARTICIPANT" in str(e):
+                    print(f"ℹ️ User {user.first_name} ({user.id}) is already a participant in {chat.title}")
+                elif "CHAT_NOT_FOUND" in str(e):
+                    print(f"❌ Chat not found: {chat.title} (ID: {chat.id})")
+                elif "BOT_NOT_MEMBER" in str(e):
+                    print(f"❌ Bot is not a member of {chat.title} (ID: {chat.id})")
+                elif "NOT_MEMBER" in str(e):
+                    print(f"❌ Bot is not a member of {chat.title} (ID: {chat.id})")
+                else:
+                    print(f"❌ Error approving join request for {user.first_name} ({user.id}): {e}")
+                    print(f"🔍 Error type: {type(e).__name__}")
+                    print(f"🔍 Full error: {str(e)}")
+        
+        print("✅ Pyrogram handlers setup completed")
+        
     except Exception as e:
-        if "User_already_participant" in str(e) or "USER_ALREADY_PARTICIPANT" in str(e):
-            print(f"ℹ️ User {user.first_name} ({user.id}) is already a participant in {chat.title}")
-        elif "CHAT_NOT_FOUND" in str(e):
-            print(f"❌ Chat not found: {chat.title} (ID: {chat.id})")
-        elif "BOT_NOT_MEMBER" in str(e):
-            print(f"❌ Bot is not a member of {chat.title} (ID: {chat.id})")
-        elif "NOT_MEMBER" in str(e):
-            print(f"❌ Bot is not a member of {chat.title} (ID: {chat.id})")
-        else:
-            print(f"❌ Error approving join request for {user.first_name} ({user.id}): {e}")
-            print(f"🔍 Error type: {type(e).__name__}")
-            print(f"🔍 Full error: {str(e)}")
+        print(f"❌ Failed to setup Pyrogram handlers: {e}")
 
 @app.route('/chat/<int:user_id>', methods=['POST'])
 def chat_send(user_id):
@@ -1903,11 +1996,25 @@ def run_pyrogram_bot():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(pyro_app.run())
+        # Setup Pyrogram handlers first
+        setup_pyrogram_handlers()
+        
+        # Get the Pyrogram app
+        app = get_pyro_app()
+        if app is None:
+            print("❌ Pyrogram app not available, exiting")
+            return
+        
+        # Run the bot
+        loop.run_until_complete(app.run())
     except Exception as e:
         print(f"❌ Pyrogram bot error: {e}")
         if "Conflict" in str(e):
             print("⚠️ Pyrogram bot conflict detected.")
+        else:
+            print(f"🔍 Full error: {str(e)}")
+    finally:
+        print("🛑 Pyrogram bot process stopped")
 
 @app.route('/bot-status')
 def bot_status():
@@ -1918,11 +2025,13 @@ def bot_status():
         telegram_status = "✅ Working" if response.status_code == 200 else "❌ Not working"
         
         # Test Pyrogram bot connection
-        import asyncio
+        pyrogram_status = "❌ Not available"
         try:
+            import asyncio
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             pyrogram_status = "✅ Working" if loop.run_until_complete(test_pyrogram_connection()) else "❌ Not working"
+            loop.close()
         except Exception as e:
             pyrogram_status = f"❌ Error: {str(e)}"
         
@@ -2146,6 +2255,602 @@ async def reset_receptionist_id():
         print(f"❌ Error resetting RECEPTIONIST_ID: {e}")
         return False
 
+def track_referral_usage(referrer_id, new_user_id):
+    """Track when someone uses a referral link and update referral count"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    
+    try:
+        # Update the new user's referred_by field
+        c.execute('UPDATE users SET referred_by = ? WHERE user_id = ?', (referrer_id, new_user_id))
+        
+        # Increment referrer's referral count
+        c.execute('UPDATE users SET referral_count = referral_count + 1 WHERE user_id = ?', (referrer_id,))
+        
+        # Get referrer info for logging
+        c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (referrer_id,))
+        referrer_info = c.fetchone()
+        
+        # Get new user info for logging
+        c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (new_user_id,))
+        new_user_info = c.fetchone()
+        
+        conn.commit()
+        
+        if referrer_info and new_user_info:
+            referrer_name = referrer_info[0] or 'Unknown'
+            new_user_name = new_user_info[0] or 'Unknown'
+            print(f"🎯 Referral tracked: {new_user_name} ({new_user_id}) was referred by {referrer_name} ({referrer_id})")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error tracking referral: {e}")
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def get_referral_stats(user_id):
+    """Get referral statistics for a specific user"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    
+    try:
+        # Get user's referral count
+        c.execute('SELECT referral_count FROM users WHERE user_id = ?', (user_id,))
+        result = c.fetchone()
+        referral_count = result[0] if result else 0
+        
+        # Get list of users referred by this user
+        c.execute('''
+            SELECT user_id, full_name, username, join_date 
+            FROM users 
+            WHERE referred_by = ? 
+            ORDER BY join_date DESC
+        ''', (user_id,))
+        referrals = c.fetchall()
+        
+        # Get user's own referrer
+        c.execute('SELECT referred_by FROM users WHERE user_id = ?', (user_id,))
+        result = c.fetchone()
+        referred_by = result[0] if result else None
+        
+        conn.close()
+        
+        return {
+            'referral_count': referral_count,
+            'referrals': [
+                {
+                    'user_id': row[0],
+                    'full_name': row[1] or 'Unknown',
+                    'username': row[2] or '',
+                    'join_date': row[3]
+                } for row in referrals
+            ],
+            'referred_by': referred_by
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting referral stats: {e}")
+        conn.close()
+        return None
+
+@app.route('/referral-stats/<int:user_id>')
+def referral_stats(user_id):
+    """Get referral statistics for a specific user"""
+    try:
+        stats = get_referral_stats(user_id)
+        if stats is not None:
+            return jsonify(stats)
+        else:
+            return jsonify({'error': 'Failed to get referral stats'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/referral-stats')
+def all_referral_stats():
+    """Get referral statistics for all users"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        
+        # Get top referrers
+        c.execute('''
+            SELECT user_id, full_name, username, referral_count 
+            FROM users 
+            WHERE referral_count > 0 
+            ORDER BY referral_count DESC 
+            LIMIT 20
+        ''')
+        top_referrers = c.fetchall()
+        
+        # Get total referrals
+        c.execute('SELECT COUNT(*) FROM users WHERE referred_by IS NOT NULL')
+        total_referrals = c.fetchone()[0]
+        
+        # Get total users
+        c.execute('SELECT COUNT(*) FROM users')
+        total_users = c.fetchone()[0]
+        
+        conn.close()
+        
+        return jsonify({
+            'top_referrers': [
+                {
+                    'user_id': row[0],
+                    'full_name': row[1] or 'Unknown',
+                    'username': row[2] or '',
+                    'referral_count': row[3]
+                } for row in top_referrers
+            ],
+            'total_referrals': total_referrals,
+            'total_users': total_users,
+            'conversion_rate': round((total_referrals / total_users * 100) if total_users > 0 else 0, 2)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+async def mylink(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Command to get user's personal tracking link"""
+    try:
+        user = update.effective_user
+        if user is None:
+            return
+        
+        print(f"🔗 /mylink command received from {user.first_name} ({user.id})")
+        
+        # Generate personal tracking link
+        personal_link = generate_personal_tracking_link(user.id, user.first_name)
+        
+        # Get referral stats
+        stats = get_referral_stats(user.id)
+        referral_count = stats['referral_count'] if stats else 0
+        
+        message_text = (
+            f"🔗 <b>Your Personal Tracking Link:</b>\n\n"
+            f"<code>{personal_link}</code>\n\n"
+            f"📊 <b>Your Stats:</b>\n"
+            f"👥 Referrals: {referral_count}\n\n"
+            f"💡 <b>How to use:</b>\n"
+            "• Share this link with friends\n"
+            "• When they click it, they'll come directly to you\n"
+            "• You'll get notified and can chat with them\n"
+            "• Track your referral success!\n\n"
+            "🚀 <b>Start sharing to grow your network!</b>"
+        )
+        
+        await update.message.reply_text(message_text, parse_mode='HTML')
+        print(f"✅ Sent personal tracking link to user {user.id}")
+        
+    except Exception as e:
+        print(f"❌ Error in /mylink command: {e}")
+        try:
+            await update.message.reply_text(
+                "❌ Sorry, there was an error getting your tracking link. Please try again later."
+            )
+        except:
+            pass
+
+@app.route('/admin/generate-tracking-link/<int:user_id>', methods=['POST'])
+def admin_generate_tracking_link(user_id):
+    """Admin endpoint to generate a new tracking link for a specific user"""
+    try:
+        # Check if user exists in database
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (user_id,))
+        result = c.fetchone()
+        conn.close()
+        
+        if not result:
+            return jsonify({'error': 'User not found'}), 404
+        
+        full_name, username = result
+        
+        # Generate new tracking link
+        new_tracking_link = generate_personal_tracking_link(user_id, full_name)
+        
+        # Update database with new link
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('UPDATE users SET invite_link = ? WHERE user_id = ?', (new_tracking_link, user_id))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'status': 'success',
+            'user_id': user_id,
+            'full_name': full_name,
+            'username': username,
+            'tracking_link': new_tracking_link,
+            'message': f'New tracking link generated for {full_name}'
+        })
+        
+    except Exception as e:
+        print(f"Error generating tracking link: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/generate-channel-link/<int:user_id>', methods=['POST'])
+def admin_generate_channel_link(user_id):
+    """Admin endpoint to generate a new channel link for a specific user"""
+    try:
+        # Check if user exists in database
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (user_id,))
+        result = c.fetchone()
+        conn.close()
+        
+        if not result:
+            return jsonify({'error': 'User not found'}), 404
+        
+        full_name, username = result
+        
+        # Generate new channel link
+        new_channel_link = generate_unique_channel_link(user_id, full_name)
+        
+        # Update database with new link
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('UPDATE users SET invite_link = ? WHERE user_id = ?', (new_channel_link, user_id))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'status': 'success',
+            'user_id': user_id,
+            'full_name': full_name,
+            'username': username,
+            'channel_link': new_channel_link,
+            'message': f'New channel link generated for {full_name}'
+        })
+        
+    except Exception as e:
+        print(f"Error generating channel link: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/user-links/<int:user_id>', methods=['GET'])
+def admin_get_user_all_links(user_id):
+    """Admin endpoint to get all types of links for a specific user"""
+    try:
+        # Check if user exists in database
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('SELECT full_name, username, invite_link, referral_count, referred_by FROM users WHERE user_id = ?', (user_id,))
+        result = c.fetchone()
+        conn.close()
+        
+        if not result:
+            return jsonify({'error': 'User not found'}), 404
+        
+        full_name, username, current_link, referral_count, referred_by = result
+        
+        # Generate fresh links
+        personal_tracking_link = generate_personal_tracking_link(user_id, full_name)
+        channel_link = generate_unique_channel_link(user_id, full_name)
+        
+        # Get referral info
+        referrer_info = None
+        if referred_by:
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (referred_by,))
+            referrer_result = c.fetchone()
+            conn.close()
+            if referrer_result:
+                referrer_info = {
+                    'user_id': referred_by,
+                    'full_name': referrer_result[0],
+                    'username': referrer_result[1]
+                }
+        
+        return jsonify({
+            'user_id': user_id,
+            'full_name': full_name,
+            'username': username,
+            'current_link': current_link,
+            'personal_tracking_link': personal_tracking_link,
+            'channel_link': channel_link,
+            'referral_count': referral_count or 0,
+            'referred_by': referrer_info,
+            'links_generated_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    except Exception as e:
+        print(f"Error getting user links: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/bulk-generate-links', methods=['POST'])
+def admin_bulk_generate_links():
+    """Admin endpoint to generate tracking links for multiple users"""
+    try:
+        data = request.get_json()
+        user_ids = data.get('user_ids', [])
+        link_type = data.get('link_type', 'both')  # 'personal', 'channel', or 'both'
+        
+        if not user_ids:
+            return jsonify({'error': 'No user IDs provided'}), 400
+        
+        results = []
+        
+        for user_id in user_ids:
+            try:
+                # Check if user exists
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (user_id,))
+                result = c.fetchone()
+                conn.close()
+                
+                if not result:
+                    results.append({
+                        'user_id': user_id,
+                        'status': 'error',
+                        'message': 'User not found'
+                    })
+                    continue
+                
+                full_name, username = result
+                new_link = None
+                
+                # Generate appropriate link type
+                if link_type == 'personal':
+                    new_link = generate_personal_tracking_link(user_id, full_name)
+                elif link_type == 'channel':
+                    new_link = generate_unique_channel_link(user_id, full_name)
+                else:  # both
+                    new_link = generate_personal_tracking_link(user_id, full_name)
+                
+                # Update database
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute('UPDATE users SET invite_link = ? WHERE user_id = ?', (new_link, user_id))
+                conn.commit()
+                conn.close()
+                
+                results.append({
+                    'user_id': user_id,
+                    'full_name': full_name,
+                    'username': username,
+                    'status': 'success',
+                    'link': new_link,
+                    'link_type': link_type
+                })
+                
+            except Exception as e:
+                results.append({
+                    'user_id': user_id,
+                    'status': 'error',
+                    'message': str(e)
+                })
+        
+        return jsonify({
+            'status': 'completed',
+            'total_users': len(user_ids),
+            'results': results
+        })
+        
+    except Exception as e:
+        print(f"Error in bulk generate links: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/regenerate-all-links', methods=['POST'])
+def admin_regenerate_all_links():
+    """Admin endpoint to regenerate all user tracking links"""
+    try:
+        # Get all users
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('SELECT user_id, full_name, username FROM users')
+        users = c.fetchall()
+        conn.close()
+        
+        results = []
+        
+        for user_id, full_name, username in users:
+            try:
+                # Generate new personal tracking link
+                new_link = generate_personal_tracking_link(user_id, full_name or 'Unknown')
+                
+                # Update database
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute('UPDATE users SET invite_link = ? WHERE user_id = ?', (new_link, user_id))
+                conn.commit()
+                conn.close()
+                
+                results.append({
+                    'user_id': user_id,
+                    'full_name': full_name or 'Unknown',
+                    'username': username or '',
+                    'status': 'success',
+                    'new_link': new_link
+                })
+                
+            except Exception as e:
+                results.append({
+                    'user_id': user_id,
+                    'full_name': full_name or 'Unknown',
+                    'username': username or '',
+                    'status': 'error',
+                    'message': str(e)
+                })
+        
+        return jsonify({
+            'status': 'completed',
+            'total_users': len(users),
+            'successful': len([r for r in results if r['status'] == 'success']),
+            'failed': len([r for r in results if r['status'] == 'error']),
+            'results': results
+        })
+        
+    except Exception as e:
+        print(f"Error regenerating all links: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/user-info/<int:user_id>', methods=['GET'])
+def admin_get_user_info(user_id):
+    """Admin endpoint to get comprehensive user information"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        
+        # Get user basic info
+        c.execute('''
+            SELECT full_name, username, join_date, invite_link, photo_url, label, 
+                   referral_count, referred_by, created_at
+            FROM users WHERE user_id = ?
+        ''', (user_id,))
+        user_info = c.fetchone()
+        
+        if not user_info:
+            return jsonify({'error': 'User not found'}), 404
+        
+        full_name, username, join_date, invite_link, photo_url, label, referral_count, referred_by, created_at = user_info
+        
+        # Get user's referrals
+        c.execute('''
+            SELECT user_id, full_name, username, join_date
+            FROM users 
+            WHERE referred_by = ? 
+            ORDER BY join_date DESC
+        ''', (user_id,))
+        referrals = c.fetchall()
+        
+        # Get user's messages count
+        c.execute('SELECT COUNT(*) FROM messages WHERE user_id = ?', (user_id,))
+        message_count = c.fetchone()[0]
+        
+        # Get user's last activity
+        c.execute('''
+            SELECT timestamp FROM messages 
+            WHERE user_id = ? 
+            ORDER BY timestamp DESC 
+            LIMIT 1
+        ''', (user_id,))
+        last_activity = c.fetchone()
+        last_activity = last_activity[0] if last_activity else None
+        
+        # Get referrer info
+        referrer_info = None
+        if referred_by:
+            c.execute('SELECT full_name, username FROM users WHERE user_id = ?', (referred_by,))
+            referrer_result = c.fetchone()
+            if referrer_result:
+                referrer_info = {
+                    'user_id': referred_by,
+                    'full_name': referrer_result[0],
+                    'username': referrer_result[1]
+                }
+        
+        conn.close()
+        
+        # Generate fresh links
+        personal_tracking_link = generate_personal_tracking_link(user_id, full_name or 'Unknown')
+        channel_link = generate_unique_channel_link(user_id, full_name or 'Unknown')
+        
+        return jsonify({
+            'user_id': user_id,
+            'basic_info': {
+                'full_name': full_name or 'Unknown',
+                'username': username or '',
+                'join_date': join_date,
+                'created_at': created_at,
+                'label': label,
+                'photo_url': photo_url
+            },
+            'links': {
+                'current_link': invite_link,
+                'personal_tracking_link': personal_tracking_link,
+                'channel_link': channel_link
+            },
+            'referral_info': {
+                'referral_count': referral_count or 0,
+                'referred_by': referrer_info,
+                'referrals': [
+                    {
+                        'user_id': row[0],
+                        'full_name': row[1] or 'Unknown',
+                        'username': row[2] or '',
+                        'join_date': row[3]
+                    } for row in referrals
+                ]
+            },
+            'activity': {
+                'message_count': message_count,
+                'last_activity': last_activity,
+                'is_online': get_user_online_status(user_id, 5)
+            },
+            'links_generated_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    except Exception as e:
+        print(f"Error getting user info: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/admin/users-with-links', methods=['GET'])
+def admin_get_users_with_links():
+    """Admin endpoint to get all users with their current links"""
+    try:
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 50))
+        offset = (page - 1) * page_size
+        
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        
+        # Get total count
+        c.execute('SELECT COUNT(*) FROM users')
+        total = c.fetchone()[0]
+        
+        # Get users with pagination
+        c.execute('''
+            SELECT user_id, full_name, username, join_date, invite_link, 
+                   referral_count, referred_by, label
+            FROM users 
+            ORDER BY join_date DESC 
+            LIMIT ? OFFSET ?
+        ''', (page_size, offset))
+        users = c.fetchall()
+        conn.close()
+        
+        users_with_links = []
+        for user in users:
+            user_id, full_name, username, join_date, invite_link, referral_count, referred_by, label = user
+            
+            # Generate fresh links for each user
+            personal_link = generate_personal_tracking_link(user_id, full_name or 'Unknown')
+            channel_link = generate_unique_channel_link(user_id, full_name or 'Unknown')
+            
+            users_with_links.append({
+                'user_id': user_id,
+                'full_name': full_name or 'Unknown',
+                'username': username or '',
+                'join_date': join_date,
+                'current_link': invite_link,
+                'personal_tracking_link': personal_link,
+                'channel_link': channel_link,
+                'referral_count': referral_count or 0,
+                'referred_by': referred_by,
+                'label': label,
+                'has_link': bool(invite_link)
+            })
+        
+        return jsonify({
+            'users': users_with_links,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': (total + page_size - 1) // page_size,
+            'links_generated_at': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    except Exception as e:
+        print(f"Error getting users with links: {e}")
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     import multiprocessing
     import time
@@ -2190,10 +2895,26 @@ if __name__ == '__main__':
     
     # Start bots in separate processes
     telegram_process = multiprocessing.Process(target=run_telegram_bot, daemon=True)
-    pyrogram_process = multiprocessing.Process(target=run_pyrogram_bot, daemon=True)
+    
+    # Check if Pyrogram is available before starting
+    pyrogram_available = False
+    try:
+        import pyrogram
+        pyrogram_available = True
+        print("✅ Pyrogram is available")
+    except ImportError:
+        print("⚠️ Pyrogram not available, skipping Pyrogram bot")
+    
+    if pyrogram_available:
+        pyrogram_process = multiprocessing.Process(target=run_pyrogram_bot, daemon=True)
+        pyrogram_process.start()
+        print("🔥 Pyrogram bot process started")
+    else:
+        pyrogram_process = None
+        print("⚠️ Pyrogram bot process not started (Pyrogram not available)")
     
     telegram_process.start()
-    pyrogram_process.start()
+    print("🤖 Telegram bot process started")
     
     # Give the bots time to start
     print("⏳ Waiting for bots to initialize...")
@@ -2207,5 +2928,12 @@ if __name__ == '__main__':
     
     print(f"🚀 Server starting on {host}:{port}")
     
-    # Run Flask in the main process
-    socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
+    try:
+        # Run Flask in the main process
+        socketio.run(app, host=host, port=port, debug=False, allow_unsafe_werkzeug=True)
+    except KeyboardInterrupt:
+        print("🛑 Shutting down...")
+        if pyrogram_process:
+            pyrogram_process.terminate()
+        telegram_process.terminate()
+        print("✅ All processes terminated")
